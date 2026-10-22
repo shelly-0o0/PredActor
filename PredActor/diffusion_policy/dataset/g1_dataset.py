@@ -345,6 +345,19 @@ class G1Dataset(OfflineDataset):
             obs, action = self._symmetric_augment(obs, action)
 
         result = {"obs": obs, "action": action}
+        if "action_valid" in raw:
+            action_valid = raw["action_valid"].bool()
+            if action_valid.ndim == 3 and action_valid.shape[-1] == 1:
+                action_valid = action_valid.squeeze(-1)
+            expected_shape = (len(batch), action.shape[1])
+            if action_valid.shape != expected_shape:
+                raise ValueError(
+                    "action_valid must have shape [batch, horizon], got "
+                    f"{tuple(action_valid.shape)}; expected {expected_shape}"
+                )
+            if self.symm_aug:
+                action_valid = torch.cat([action_valid, action_valid], dim=0)
+            result["action_valid_mask"] = action_valid
         if "horizon_valid" in raw:
             valid_mask = raw["horizon_valid"].bool()
             if self.symm_aug:

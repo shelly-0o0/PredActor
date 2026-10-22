@@ -49,7 +49,9 @@ for _stream in (sys.stdout, sys.stderr):
 import os
 import pathlib
 from pathlib import Path
+import random
 import click
+import numpy as np
 import torch
 import json
 from omegaconf import OmegaConf
@@ -258,6 +260,16 @@ def _apply_runtime_overrides(cfg, runner_cfg, device=None, headless=None, fk_dev
 )
 @click.option('--checkpoint-replica', type=click.Choice(['agent', 'ema_agent']),
               default='agent', show_default=True, help='Checkpoint weights used for inference.')
+@click.option('--text-command', default=None,
+              help='Use one fixed CLIP text command and disable stdin text updates.')
+@click.option('--max-steps', type=click.IntRange(1), default=None,
+              help='Override the configured number of control steps.')
+@click.option('--seed', type=int, default=42, show_default=True,
+              help='Seed NumPy and PyTorch for a reproducible rollout.')
+@click.option('--walk-rollout', default=None, type=click.Path(dir_okay=False),
+              help='Save a fixed-command rollout NPZ for walk-metric evaluation.')
+@click.option('--walk-seconds', type=click.FloatRange(min=0.01), default=10.0,
+              show_default=True, help='Duration used with --walk-rollout.')
 @click.option(
     '--headless/--no-headless', default=None,
     help=(
@@ -287,7 +299,9 @@ def _apply_runtime_overrides(cfg, runner_cfg, device=None, headless=None, fk_dev
               help='Camera damping time constant in seconds; 0 disables damping.')
 @click.option('--camera-lookat-offset', type=(float, float, float), default=None,
               help='Camera look-at offset X Y Z relative to the followed body.')
-def main(checkpoint, config, output_dir, device, fk_device, checkpoint_replica, headless, precision, web_ui, web_host, web_port,
+def main(checkpoint, config, output_dir, device, fk_device, checkpoint_replica,
+         text_command, max_steps, seed, walk_rollout, walk_seconds,
+         headless, precision, web_ui, web_host, web_port,
          web_no_browser, web_joystick_device, web_joystick_type, web_perturb,
          web_perturb_max_force, web_perturb_max_torque, camera_follow, camera_follow_body,
          camera_follow_yaw, camera_smoothing_tau, camera_lookat_offset):
@@ -305,6 +319,11 @@ def main(checkpoint, config, output_dir, device, fk_device, checkpoint_replica, 
     # Explicit environment values still win for development and custom layouts.
     os.environ.setdefault('PREDACTOR_ROOT', str(EVALUATOR_ROOT))
     os.environ.setdefault('PREDACTOR_TEXT_CHECKPOINT', str(DEFAULT_TEXT_CHECKPOINT))
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
     # Create output directory
     pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
@@ -368,6 +387,21 @@ def main(checkpoint, config, output_dir, device, fk_device, checkpoint_replica, 
     runner_cfg = OmegaConf.create(cfg[runner])
     _apply_runtime_overrides(
         cfg, runner_cfg, device=device, headless=headless, fk_device=fk_device)
+    if max_steps is not None:
+        runner_cfg.max_steps = max_steps
+    if walk_rollout is not None:
+        if text_command is None:
+            raise click.UsageError('--walk-rollout requires --text-command')
+        control_dt = float(OmegaConf.select(
+            runner_cfg, 'env.config.control_dt',
+            default=OmegaConf.select(runner_cfg, 'control_dt', default=0.02)))
+        rollout_steps = int(round(walk_seconds / control_dt))
+        if rollout_steps < 1:
+            raise click.UsageError('--walk-seconds is shorter than one control step')
+        if max_steps is not None and max_steps != rollout_steps:
+            raise click.UsageError(
+                '--max-steps conflicts with the duration implied by --walk-seconds')
+        runner_cfg.max_steps = rollout_steps
     print(f"\nUsing runner configuration: {runner}")
     print(OmegaConf.to_yaml(runner_cfg))
 
@@ -415,6 +449,9 @@ def main(checkpoint, config, output_dir, device, fk_device, checkpoint_replica, 
                 continue
             pcfg = {k: v for k, v in pcfg.items() if k != 'enabled'}
             target = str(pcfg.get('_target_', ''))
+            if text_command is not None and target.endswith('.CLIPTeleop'):
+                pcfg['default_text'] = text_command
+                pcfg['interactive_input'] = False
             if web_ui and target.endswith('.CLIPTeleop'):
                 pcfg['interactive_input'] = False
                 precache = list(pcfg.get('precache_texts') or ())
@@ -479,10 +516,21 @@ def main(checkpoint, config, output_dir, device, fk_device, checkpoint_replica, 
             perturb_max_torque=web_perturb_max_torque, camera_config=web_camera_config)
         runtime_observer.launch()
 
+    if text_command is not None and task_cond_provider is None:
+        raise click.UsageError(
+            '--text-command requires an enabled CLIP task-condition provider')
+
+    metrics_collector = None
+    if walk_rollout is not None:
+        from dagger.eval_collector import WalkRolloutCollector
+        metrics_collector = WalkRolloutCollector(
+            walk_rollout, text_command, dt=control_dt, seed=seed)
+
     # Instantiate runner using Hydra
     env_runner = hydra.utils.instantiate(
         runner_cfg, task_cond_provider=task_cond_provider,
-        runtime_observer=runtime_observer)
+        runtime_observer=runtime_observer,
+        metrics_collector=metrics_collector)
     
     print(f"Runner type: {type(env_runner).__name__}")
 

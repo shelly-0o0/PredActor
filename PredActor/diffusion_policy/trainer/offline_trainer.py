@@ -156,6 +156,10 @@ class OfflineTrainer(BaseTrainer):
             capture_audit=capture_audit,
         )
 
+    def _after_training_data_ready(self, cfg, dataset, normalizer) -> None:
+        """Subclass hook after dataset/normalizer setup and before training."""
+        del cfg, dataset, normalizer
+
     def load_payload(self, payload, exclude_keys=None, include_keys=None, **kwargs):
         super().load_payload(
             payload,
@@ -241,7 +245,7 @@ class OfflineTrainer(BaseTrainer):
         if cfg.training.use_ema and self.ema_agent is not None:
             self.ema_agent.set_normalizer(normalizer)
             self.ema_agent.set_dataset_class(dataset.__class__)
-        
+
         print(f"Loaded normalizer from dataset: {cfg.dataset.zarr_path}")
         print(f"Normalizer type: {type(normalizer).__name__}")
         
@@ -275,6 +279,8 @@ class OfflineTrainer(BaseTrainer):
         if cfg.training.use_ema and self.ema_agent is not None:
             self.ema_agent.set_normalizer(normalizer)
             self.ema_agent.set_dataset_class(dataset.__class__)
+
+        self._after_training_data_ready(cfg, dataset, normalizer)
 
         # Wire task mask term boundaries from the dataset's TermComposer
         if hasattr(dataset, 'term_composer'):
@@ -536,7 +542,18 @@ class OfflineTrainer(BaseTrainer):
             # checkpoint
             if (self.epoch % cfg.training.checkpoint_every) == 0:
                 # checkpointing
-                if cfg.checkpoint.save_last_ckpt:
+                if cfg.training.get('save_epoch_checkpoints', False):
+                    # Strict short DAgger runs must retain every epoch so
+                    # closed-loop selection can reject a later overfit model.
+                    # The terminal save below still publishes latest.ckpt.
+                    if self._saving_thread is not None:
+                        self._saving_thread.join()
+                    self.save_checkpoint(
+                        save_wandb=cfg.checkpoint.get('upload_to_wandb', False),
+                        tag=f'epoch_{self.epoch + 1:02d}',
+                        use_thread=False,
+                    )
+                elif cfg.checkpoint.save_last_ckpt:
                     self.save_checkpoint(save_wandb=cfg.checkpoint.get('upload_to_wandb', False), tag='latest')   
             
                 # sanitize metric names

@@ -1,0 +1,100 @@
+_target_: dagger.trainer.DaggerTrainer
+
+defaults:
+  - defaults/data_collection
+  - defaults/dataloader
+  - defaults/val_dataloader
+  - defaults/ema
+  - defaults/logging_base
+  - defaults/optimizer
+  - defaults/policy/cond_codiffuse
+  - defaults/dataset/base
+  - defaults/training
+  - defaults/checkpoint
+  - defaults/env_runner
+  - defaults/env/mujoco
+  - _self_
+
+exp_name: strict-dagger
+output_dir: "${oc.env:PREDACTOR_OUTPUT_ROOT,./outputs}/"
+dataset_dir: "${oc.env:PREDACTOR_DATASET_ROOT,./Artifacts/dataset}"
+
+logging:
+  group: strict-dagger
+  id: null
+  mode: offline
+  name: strict-dagger
+  project: diffuse_cloc
+  resume: false
+  tags: [g1prdp, strict-dagger, straight-walk]
+
+policy:
+  condition_dropout_config:
+    enable: false
+  actor:
+    _target_: diffusion_policy.modules.diffuse_cprdp.DiffuseCPRDP
+    enable_root_pos_guide: false
+    whole_body_guidance_config:
+      enabled: false
+    backbone:
+      x_input_dim: 384
+      x_output_dim: 384
+      cond_dim: 608
+      n_cond_steps: 4
+      cross_attn_mode: full
+    clean_past_state: false
+    no_state_override: true
+    data_profile: g1_prdp_standard_cond
+    ddim_steps: 5
+    ddim_eta: 0.0
+    use_ns_ddim: true
+    randomize_noise_schedule: true
+    # Positions 0..2 are learner history and are masked per-window by
+    # action_valid. Position 3 (the live origin) remains a teacher target.
+    action_weight_schedule: constant-to-8
+    action_rate_target_mode: teacher_delta
+    action_rate_loss_scale: 0.1
+
+dataset:
+  _target_: dagger.dataset.StrictDaggerDataset
+  data_profile: g1_prdp_standard_cond
+  zarr_path: "${oc.env:PREDACTOR_DAGGER_MANIFEST}"
+  n_task_steps: 4
+  load_to_memory: false
+  # Runtime reflection keeps CLIP left/right text unchanged and would create
+  # contradictory labels. Use an explicit counterfactual shard instead.
+  symm_aug: false
+  text_replacement_probability: 0.35
+  dropout_config_train_overrides:
+    text_cond:
+      enabled: false
+  data_sample_rate: 0.0  # ignored: the normalizer is loaded from pi0
+
+optimizer:
+  learning_rate: 1.5e-5
+  weight_decay: 0.001
+  betas: [0.9, 0.95]
+
+training:
+  num_epochs: 4
+  resume: false
+  # Short low-LR DAgger updates are evaluated from the actual student. An EMA
+  # initialized at pi0 would lag toward pi0 and create a second ambiguous pi1.
+  use_ema: false
+  lr_scheduler: constant
+  lr_warmup_steps: 0
+  checkpoint_every: 1
+  save_epoch_checkpoints: true
+  save_terminal_checkpoint: true
+
+dagger:
+  init_checkpoint: "${oc.env:PREDACTOR_PI0_CHECKPOINT}"
+  init_replica: agent
+
+dataloader:
+  batch_size: 256
+  num_workers: 8
+  persistent_workers: true
+  pin_memory: true
+  shuffle: true
+  prefetch_factor: 2

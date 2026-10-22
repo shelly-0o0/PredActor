@@ -1,0 +1,36 @@
+schema: predactor-strict-dagger-v1
+
+# Must be the exact pi0 checkpoint used to initialize this round.
+normalizer_checkpoint: ${PREDACTOR_PI0_CHECKPOINT}
+normalizer_replica: agent
+
+# Paths are references only; no aggregate dataset is copied.
+sources:
+  - name: d0
+    path: ${PREDACTOR_D0_ZARR}
+    role: d0
+    weight: 0.60
+  - name: round1_origins
+    path: ${PREDACTOR_DAGGER_ROOT}/round_01/origins.zarr
+    role: origin
+    weight: 0.25
+  - name: round1_recoveries
+    path: ${PREDACTOR_DAGGER_ROOT}/round_01/recoveries.zarr
+    role: recovery
+    weight: 0.10
+  - name: round1_disturbance
+    path: ${PREDACTOR_DAGGER_ROOT}/round_01/disturbance.zarr
+    role: disturbance
+    weight: 0.05
+
+text_conditioning:
+  embeddings: ${PREDACTOR_DAGGER_ROOT}/text/canonical_clip_vit_b32.npz
+  commands:
+    - walk
+    - walk straight
+    - walk backward
+    - walk left
+    - walk right
+    - turn left while walking
+    - turn right while walking
+    - walk in a circle

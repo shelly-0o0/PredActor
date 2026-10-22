@@ -1,27 +1,34 @@
 # Vocabulary for Text Alignment in Data Dyeing
 vocabulary_categories:
-  Walking:
-    - Walk
-    - Walking
-    - Walk forward
-    - Walking forward
-    - Walk back and forth
-    - Walking backwards
-    - Walk in circle
-    - Walking in a circle
-    - Walk around
-    - Taking a walk
-    - Power walking
-    - walks forward
-    - walks backward
-    - walks to the left
-    - walks to the right
-    - walking slowly
-    - walking fast
-    - walks in a circle
-    - walks and turns around
-    - walks forward while curving
-    - power walking
+  Walking_Straight:
+    - walk
+    - walk straight
+    - walk forward
+    - walking straight
+    - walking forward
+    - power walking straight
+
+  Walking_Backward:
+    - walk backward
+    - walking backward
+
+  Walking_Lateral:
+    - walk left
+    - walk right
+    - walking to the left
+    - walking to the right
+
+  Walking_Turning:
+    - turn left while walking
+    - turn right while walking
+    - walking while turning left
+    - walking while turning right
+
+  Walking_Circle:
+    - walk in a circle
+    - walking in a circle
+    - circle left while walking
+    - circle right while walking
 
   Running:
     - running

@@ -48,7 +48,7 @@ py-modules = ["cond_eval"]
 
 [tool.setuptools.packages.find]
 where = ["PredActor"]
-include = ["diffusion_policy*"]
+include = ["diffusion_policy*", "dagger*"]
 
 [tool.uv.sources]
 clip = { git = "https://github.com/openai/CLIP.git", rev = "dcba3cb2e2827b402d2701e7e1c7d9fed8a20ef1" }

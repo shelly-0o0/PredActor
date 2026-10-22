@@ -281,13 +281,22 @@ class BCAgent(BaseAgent):
     def compute_loss(self, batch, local_epoch_idx, return_loss_components=False):
         B = batch['obs'].shape[0]
 
-        nbatch = self.normalizer.normalize(batch)
+        # Masks and source provenance are training metadata, not normalized
+        # model features. Keeping them out of LinearNormalizer also lets D0
+        # and strict DAgger windows share the frozen pi0 normalizer.
+        model_batch = {
+            key: value for key, value in batch.items()
+            if key in {"obs", "action", "cond"}
+        }
+        nbatch = self.normalizer.normalize(model_batch)
 
         nobs = nbatch['obs']
         naction = nbatch['action']
         
         # Extract optional conditioning
         ncond = nbatch.get('cond', None)
+        action_valid_mask = batch.get("action_valid_mask")
+        state_valid_mask = batch.get("valid_mask")
 
         # 0. Apply condition compressor (trainable dimensionality reduction).
         #    Applied BEFORE dropout/mask so the compressor sees clean normalized values.
@@ -321,6 +330,8 @@ class BCAgent(BaseAgent):
                 action_traj=naction,
                 state_traj=nobs,
                 cond=ncond,
+                action_valid_mask=action_valid_mask,
+                state_valid_mask=state_valid_mask,
                 return_loss_components=return_loss_components,
             )
             loss, action_loss, state_loss, action_pred, state_pred = loss_result[:5]

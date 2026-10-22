@@ -280,6 +280,10 @@ class EnvRunner(BaseLowdimRunner):
         n_envs_init = next(iter(init_terms.values())).shape[0]
         self._attach_task_condition(init_terms, n_envs_init)
         raw_history = TermComposer.init_history(init_terms, n_obs_steps=self.n_obs_steps)
+        if self.metrics_collector:
+            start_collector = getattr(self.metrics_collector, "start", None)
+            if callable(start_collector):
+                start_collector(raw_history)
 
         if self.enable_debugger:
             from diffusion_policy.utils.cloc_fdb_debugger import debugger_worker_process
@@ -602,15 +606,10 @@ class EnvRunner(BaseLowdimRunner):
         # world→local delta.  Also update the MuJoCo debug sphere.
         self._feed_point_reach_guidance(bc_agent, next_terms)
 
-        # Per-env termination check — each env implements its own criterion.
-        if self.env.check_terminate() and self._auto_reset_enabled():
-            raw_history = self._reset_environment_history(
-                raw_history, reason="automatic")
-            next_terms = {key: value[:, -1:] for key, value in raw_history.items()}
-            after_reset = getattr(self.runtime_observer, "after_reset", None)
-            if callable(after_reset):
-                after_reset(step_idx + 1, self.env)
-
+        # Preserve the terminal state for metrics before any automatic reset.
+        # MuJoCo reports deployment ``done=False`` and exposes falls through
+        # check_terminate(), so both sources must participate in episode end.
+        terminated_by_env = bool(self.env.check_terminate())
         raw_history = TermComposer.shift_append(raw_history, next_terms)
 
         reward_t = torch.as_tensor(rewards, device=device, dtype=torch.float32).flatten()
@@ -619,11 +618,14 @@ class EnvRunner(BaseLowdimRunner):
         if reward_t.numel() == 1 and ctx["current_rewards"].numel() > 1:
             reward_t = reward_t.repeat(ctx["current_rewards"].numel())
             done_t = done_t.repeat(ctx["current_rewards"].numel())
+        if terminated_by_env:
+            done_t = torch.ones_like(done_t)
 
         ctx["current_rewards"] += reward_t
         ctx["current_lengths"] += 1
 
         # --- Metrics collection ---
+        collector_keep_running = True
         if self.metrics_collector:
             step_ms = (time.perf_counter() - t_loop_start) * 1000.0
             step_data = self.metrics_collector.collect_step_data(
@@ -635,7 +637,9 @@ class EnvRunner(BaseLowdimRunner):
                 reward=rewards,
                 done=bool(done_t.any()),
             )
-            self.metrics_collector.step(step_data)
+            collector_result = self.metrics_collector.step(step_data)
+            if collector_result is False:
+                collector_keep_running = False
 
         if done_t.any():
             done_idxs = torch.where(done_t)[0]
@@ -649,9 +653,19 @@ class EnvRunner(BaseLowdimRunner):
             if self.metrics_collector:
                 self.metrics_collector.flush_episode()
 
+        if terminated_by_env and self._auto_reset_enabled() and collector_keep_running:
+            raw_history = self._reset_environment_history(
+                raw_history, reason="automatic")
+            after_reset = getattr(self.runtime_observer, "after_reset", None)
+            if callable(after_reset):
+                after_reset(step_idx + 1, self.env)
+
         ctx["raw_history"] = raw_history
         ctx["step_count"] += 1
         ctx["pbar"].update(1)
+
+        if not collector_keep_running:
+            return False
 
         if not self.env.is_running():
             return False

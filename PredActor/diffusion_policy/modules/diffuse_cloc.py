@@ -664,6 +664,8 @@ class DiffuseCLoC(JointDiffusionActor):
         action_traj,
         state_traj,
         cond=None,
+        action_valid_mask=None,
+        state_valid_mask=None,
         return_loss_components=False,
     ):
         """
@@ -682,6 +684,8 @@ class DiffuseCLoC(JointDiffusionActor):
             action_traj,
             state_traj,
             cond=cond,
+            action_valid_mask=action_valid_mask,
+            state_valid_mask=state_valid_mask,
             return_loss_components=return_loss_components,
         )
 

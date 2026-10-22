@@ -130,7 +130,14 @@ def run_bc_training_step(
 
     audit = None
     if capture_audit:
-        normalized = agent.normalizer.normalize(batch)
+        # Strict DAgger adds masks and provenance to the batch. They are part
+        # of the raw audit digest but are not model features and therefore do
+        # not belong in the frozen pi0 normalizer.
+        normalized = agent.normalizer.normalize({
+            key: value
+            for key, value in batch.items()
+            if key in {"obs", "action", "cond"}
+        })
         audit = {
             "raw_batch_sha256": nested_state_sha256(batch),
             "normalized_batch_sha256": nested_state_sha256(normalized),

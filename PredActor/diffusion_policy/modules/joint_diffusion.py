@@ -39,6 +39,8 @@ class JointDiffusionActor(SequentialDiffusionModel, BaseActor):
         n_past_steps=8,
         state_loss_scale: float = 1.0,
         sync_timesteps: bool = False,
+        action_rate_target_mode: str = "smooth",
+        action_rate_loss_scale: float = 0.1,
         **kwargs,
     ):
         SequentialDiffusionModel.__init__(self, **kwargs)
@@ -66,6 +68,14 @@ class JointDiffusionActor(SequentialDiffusionModel, BaseActor):
         # Ablation controls (see test/test_codiffuse_dp_ablation/)
         self.state_loss_scale = state_loss_scale  # 0.0 → action-only loss (Factor 1 ablation)
         self.sync_timesteps = sync_timesteps       # True → same t for state & action (Factor 4 ablation)
+        if action_rate_target_mode not in {"smooth", "teacher_delta"}:
+            raise ValueError(
+                "action_rate_target_mode must be 'smooth' or 'teacher_delta'"
+            )
+        self.action_rate_target_mode = action_rate_target_mode
+        self.action_rate_loss_scale = float(action_rate_loss_scale)
+        if self.action_rate_loss_scale < 0:
+            raise ValueError("action_rate_loss_scale must be non-negative")
         self.backbone_call_count = 0
 
         if state_pred_epsilon is None:
@@ -604,6 +614,8 @@ class JointDiffusionActor(SequentialDiffusionModel, BaseActor):
         action_traj,
         state_traj,
         cond=None,
+        action_valid_mask=None,
+        state_valid_mask=None,
         return_loss_components=False,
     ):
         """
@@ -677,7 +689,15 @@ class JointDiffusionActor(SequentialDiffusionModel, BaseActor):
 
         # action_loss = action_loss * 2 # times 3
         action_loss = action_loss * self.action_loss_weights.to(self.device)
-        action_prediction_loss = action_loss.mean()
+        if action_valid_mask is None:
+            action_prediction_loss = action_loss.mean()
+        else:
+            action_mask = action_valid_mask.to(
+                device=action_loss.device, dtype=action_loss.dtype
+            ).unsqueeze(-1)
+            expanded_mask = action_mask.expand_as(action_loss)
+            denominator = expanded_mask.sum().clamp_min(1.0)
+            action_prediction_loss = (action_loss * expanded_mask).sum() / denominator
         action_loss = action_prediction_loss
 
         # ---------------- state loss ------------------------
@@ -687,17 +707,48 @@ class JointDiffusionActor(SequentialDiffusionModel, BaseActor):
             state_loss = torch.nn.functional.mse_loss(state_pred, state_traj, reduction="none")
 
         state_loss = state_loss * self.state_loss_weights.to(self.device)
-        state_loss = state_loss.mean()
+        if state_valid_mask is None:
+            state_loss = state_loss.mean()
+        else:
+            state_mask = state_valid_mask.to(
+                device=state_loss.device, dtype=state_loss.dtype
+            ).unsqueeze(-1)
+            expanded_state_mask = state_mask.expand_as(state_loss)
+            denominator = expanded_state_mask.sum().clamp_min(1.0)
+            state_loss = (state_loss * expanded_state_mask).sum() / denominator
         
         # velocity_loss = torch.nn.functional.mse_loss(state_pred[:, 1:, :], state_pred[:, :-1, :], reduction="none")
         # velocity_loss = velocity_loss.mean() * .1
 
         # state_loss += velocity_loss
                 
-        action_rate_mse = torch.nn.functional.mse_loss(
-            action_pred[:, 1:, :], action_pred[:, :-1, :], reduction="none"
-        ).mean()
-        action_rate_loss = action_rate_mse * .1
+        # Convert epsilon output back to x0 before temporal supervision.
+        action_clean_pred = (
+            self.predict_x0_from_epsilon(action_noisy, action_t, action_pred)
+            if self.action_pred_epsilon else action_pred
+        )
+        predicted_delta = action_clean_pred[:, 1:, :] - action_clean_pred[:, :-1, :]
+        if self.action_rate_target_mode == "teacher_delta":
+            # Paper-correct DAgger objective: match teacher temporal changes.
+            action_rate_target = action_traj[:, 1:, :] - action_traj[:, :-1, :]
+        else:
+            # Backward-compatible behavior for existing non-DAgger configs.
+            action_rate_target = torch.zeros_like(predicted_delta)
+        action_rate_error = torch.nn.functional.mse_loss(
+            predicted_delta, action_rate_target, reduction="none"
+        )
+        if action_valid_mask is None:
+            action_rate_mse = action_rate_error.mean()
+        else:
+            rate_mask = (
+                action_valid_mask[:, 1:].bool() & action_valid_mask[:, :-1].bool()
+            ).to(device=action_rate_error.device, dtype=action_rate_error.dtype)
+            rate_mask = rate_mask.unsqueeze(-1).expand_as(action_rate_error)
+            action_rate_mse = (
+                (action_rate_error * rate_mask).sum()
+                / rate_mask.sum().clamp_min(1.0)
+            )
+        action_rate_loss = action_rate_mse * self.action_rate_loss_scale
         # Keep the raw prediction term independently auditable. The prior
         # in-place add aliased and mutated action_prediction_loss.
         action_loss = action_prediction_loss + action_rate_loss
@@ -716,7 +767,9 @@ class JointDiffusionActor(SequentialDiffusionModel, BaseActor):
         return result + ({
             "action_prediction_loss": action_prediction_loss,
             "action_rate_mse": action_rate_mse,
-            "action_rate_coefficient": action_rate_loss.new_tensor(0.1),
+            "action_rate_coefficient": action_rate_loss.new_tensor(
+                self.action_rate_loss_scale
+            ),
             "action_rate_loss": action_rate_loss,
             "action_loss": action_loss,
             "state_prediction_loss": state_loss,

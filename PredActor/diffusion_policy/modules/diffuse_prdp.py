@@ -180,7 +180,15 @@ class DiffusePRDP(JointDiffusionActor):
     #  Training                                                            #
     # ------------------------------------------------------------------ #
 
-    def p_losses(self, action_traj, state_traj, cond=None):
+    def p_losses(
+        self,
+        action_traj,
+        state_traj,
+        cond=None,
+        action_valid_mask=None,
+        state_valid_mask=None,
+        return_loss_components=False,
+    ):
         """Apply state emphasis before computing DDPM training loss.
 
         Args:
@@ -192,7 +200,14 @@ class DiffusePRDP(JointDiffusionActor):
             Same as JointDiffusionActor.p_losses.
         """
         state_traj = state_traj @ self.emphasis_mat
-        return super().p_losses(action_traj, state_traj, cond=cond)
+        return super().p_losses(
+            action_traj,
+            state_traj,
+            cond=cond,
+            action_valid_mask=action_valid_mask,
+            state_valid_mask=state_valid_mask,
+            return_loss_components=return_loss_components,
+        )
 
     # ------------------------------------------------------------------ #
     #  Emphasis projection (identical to DiffuseCLoC)                     #
