@@ -56,9 +56,21 @@ def straight_walk_metrics(
 
     foot_difference = float("nan")
     if left_foot_rot is not None and right_foot_rot is not None:
-        left = np.unwrap(quaternion_yaw_wxyz(np.asarray(left_foot_rot)[:count]))
-        right = np.unwrap(quaternion_yaw_wxyz(np.asarray(right_foot_rot)[:count]))
-        foot_difference = float(np.mean(np.abs(np.angle(np.exp(1j * (left - right))))))
+        left_quaternion = np.asarray(left_foot_rot, dtype=np.float64)[:count]
+        right_quaternion = np.asarray(right_foot_rot, dtype=np.float64)[:count]
+        left_norm = np.linalg.norm(left_quaternion, axis=-1)
+        right_norm = np.linalg.norm(right_quaternion, axis=-1)
+        valid = (left_norm > 1e-8) & (right_norm > 1e-8)
+        if np.any(valid):
+            left = quaternion_yaw_wxyz(
+                left_quaternion[valid] / left_norm[valid, None]
+            )
+            right = quaternion_yaw_wxyz(
+                right_quaternion[valid] / right_norm[valid, None]
+            )
+            foot_difference = float(np.mean(
+                np.abs(np.angle(np.exp(1j * (left - right))))
+            ))
 
     survived = 1.0
     if terminated is not None:

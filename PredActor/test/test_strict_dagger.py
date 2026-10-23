@@ -118,6 +118,18 @@ sources:
         self.assertAlmostEqual(result.abs_lateral_displacement_m, 0.0)
         self.assertAlmostEqual(result.cumulative_abs_delta_yaw_rad, 0.0)
 
+    def test_straight_metrics_reject_invalid_foot_quaternions(self):
+        root_pos = np.zeros((11, 3), dtype=np.float64)
+        root_rot = np.zeros((11, 4), dtype=np.float64)
+        root_rot[:, 0] = 1.0
+        invalid_foot_rot = np.zeros((11, 4), dtype=np.float64)
+        result = straight_walk_metrics(
+            root_pos, root_rot, dt=0.02,
+            left_foot_rot=invalid_foot_rot,
+            right_foot_rot=invalid_foot_rot,
+        )
+        self.assertTrue(np.isnan(result.mean_abs_foot_yaw_difference_rad))
+
     def test_command_distinguishability_uses_signed_net_yaw(self):
         def rollout(yaw_end):
             yaw = np.linspace(0.0, yaw_end, 11)
