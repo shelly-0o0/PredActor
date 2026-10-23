@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from dagger.branching import BranchWindow
+from dagger.command_map import MotionCommandMap, validate_command_geometry
 from dagger.collector import CollectionConfig, StrictDaggerCollector
 from dagger.dataset import _weighted_counts
 from dagger.eval_collector import WalkRolloutCollector
@@ -94,6 +95,53 @@ class StrictDaggerTests(unittest.TestCase):
 
     def test_weighted_counts_are_exact(self):
         self.assertEqual(_weighted_counts([0.6, 0.25, 0.1, 0.05], 100), [60, 25, 10, 5])
+
+    def test_motion_command_map_allows_reviewed_one_to_many_exact_prompts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "commands.yaml"
+            path.write_text(
+                """schema: predactor-motion-command-map-v1
+motions:
+  - motion_idx: 34
+    motion_name: walk1
+    commands: [walk, walk straight]
+    reviewed: true
+    review_basis: filename_and_reference_kinematics
+    reason: sustained forward walk
+""",
+                encoding="utf-8",
+            )
+            command_map = MotionCommandMap.load(path)
+            self.assertEqual(
+                command_map.commands_by_motion_idx[34],
+                ("walk", "walk straight"),
+            )
+
+    def test_motion_command_map_rejects_aliases_and_unreviewed_entries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "commands.yaml"
+            path.write_text(
+                """schema: predactor-motion-command-map-v1
+motions:
+  - motion_idx: 1
+    motion_name: walking
+    commands: [walking]
+    reviewed: false
+""",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "non-canonical"):
+                MotionCommandMap.load(path)
+
+    def test_command_geometry_rejects_directionally_contradictory_label(self):
+        metrics = {
+            "forward_displacement_m": 1.0,
+            "lateral_displacement_m": 0.0,
+            "net_yaw_rad": 0.7,
+        }
+        validate_command_geometry("turn left while walking", metrics)
+        with self.assertRaisesRegex(ValueError, "contradict"):
+            validate_command_geometry("turn right while walking", metrics)
 
     def test_manifest_rejects_beta_mixing(self):
         with tempfile.TemporaryDirectory() as directory:

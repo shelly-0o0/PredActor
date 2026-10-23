@@ -1,0 +1,110 @@
+schema: predactor-motion-command-map-v1
+motions:
+  - motion_idx: 20
+    motion_name: homejrhangmr_dataset_pbhc_contact_maskACCADFemale1Walking_c3dB10-walkturnleft45_posespkl
+    commands: [turn left while walking]
+    reviewed: true
+    review_basis: filename_and_reference_kinematics
+    reason: "Left-turn name and positive net root yaw agree."
+  - motion_idx: 21
+    motion_name: homejrhangmr_dataset_pbhc_contact_maskACCADFemale1Walking_c3dB11-walkturnleft135_posespkl
+    commands: [turn left while walking]
+    reviewed: true
+    review_basis: filename_and_reference_kinematics
+    reason: "Left-turn name and positive net root yaw agree."
+  - motion_idx: 22
+    motion_name: homejrhangmr_dataset_pbhc_contact_maskACCADFemale1Walking_c3dB13-walkturnright45_posespkl
+    commands: [turn right while walking]
+    reviewed: true
+    review_basis: filename_and_reference_kinematics
+    reason: "Right-turn name and negative net root yaw agree."
+  - motion_idx: 34
+    motion_name: homejrhangmr_dataset_pbhc_contact_maskACCADFemale1Walking_c3dB3-walk1_posespkl
+    commands: [walk, walk straight]
+    reviewed: true
+    review_basis: filename_and_reference_kinematics
+    reason: "Sustained forward walk with small net heading change; both exact prompts are valid."
+  - motion_idx: 36
+    motion_name: homejrhangmr_dataset_pbhc_contact_maskACCADFemale1Walking_c3dB5-walkbackwards_posespkl
+    commands: [walk backward]
+    reviewed: true
+    review_basis: filename_and_reference_kinematics
+    reason: "Backward name and negative forward displacement agree."
+  - motion_idx: 39
+    motion_name: homejrhangmr_dataset_pbhc_contact_maskACCADFemale1Walking_c3dB9-walkturnleft90_posespkl
+    commands: [turn left while walking]
+    reviewed: true
+    review_basis: filename_and_reference_kinematics
+    reason: "Left-turn name and positive net root yaw agree."
+  - motion_idx: 52
+    motion_name: homejrhangmr_dataset_pbhc_contact_maskACCADMale1Walking_c3dWalkB10-Walkturnleft45_posespkl
+    commands: [turn left while walking]
+    reviewed: true
+    review_basis: filename_and_reference_kinematics
+    reason: "Left-turn name and positive net root yaw agree."
+  - motion_idx: 53
+    motion_name: homejrhangmr_dataset_pbhc_contact_maskACCADMale1Walking_c3dWalkB13-Walkturnright45_posespkl
+    commands: [turn right while walking]
+    reviewed: true
+    review_basis: filename_and_reference_kinematics
+    reason: "Right-turn name and negative net root yaw agree."
+  - motion_idx: 57
+    motion_name: homejrhangmr_dataset_pbhc_contact_maskACCADMale1Walking_c3dWalkB22-Sidestepleft_posespkl
+    commands: [walk left]
+    reviewed: true
+    review_basis: filename_and_reference_kinematics
+    reason: "Left sidestep name and positive initial-frame lateral displacement agree."
+  - motion_idx: 58
+    motion_name: homejrhangmr_dataset_pbhc_contact_maskACCADMale1Walking_c3dWalkB23-Sidestepright_posespkl
+    commands: [walk right]
+    reviewed: true
+    review_basis: filename_and_reference_kinematics
+    reason: "Right sidestep name and negative initial-frame lateral displacement agree."
+  - motion_idx: 111
+    motion_name: homejrhangmr_dataset_pbhc_contact_maskACCADMale2Walking_c3dB11-Walkturnleft135_posespkl
+    commands: [turn left while walking]
+    reviewed: true
+    review_basis: filename_and_reference_kinematics
+    reason: "Left-turn name and positive net root yaw agree."
+  - motion_idx: 112
+    motion_name: homejrhangmr_dataset_pbhc_contact_maskACCADMale2Walking_c3dB13-Walkturnright90_posespkl
+    commands: [turn right while walking]
+    reviewed: true
+    review_basis: filename_and_reference_kinematics
+    reason: "Right-turn name and negative net root yaw agree."
+  - motion_idx: 114
+    motion_name: homejrhangmr_dataset_pbhc_contact_maskACCADMale2Walking_c3dB14-Walkturnright45t2_posespkl
+    commands: [turn right while walking]
+    reviewed: true
+    review_basis: filename_and_reference_kinematics
+    reason: "Right-turn name and negative net root yaw agree; contradictory index 113 is excluded."
+  - motion_idx: 122
+    motion_name: homejrhangmr_dataset_pbhc_contact_maskACCADMale2Walking_c3dB22-sidestepleft_posespkl
+    commands: [walk left]
+    reviewed: true
+    review_basis: filename_and_reference_kinematics
+    reason: "Left sidestep name and positive initial-frame lateral displacement agree."
+  - motion_idx: 123
+    motion_name: homejrhangmr_dataset_pbhc_contact_maskACCADMale2Walking_c3dB23-sidestepright_posespkl
+    commands: [walk right]
+    reviewed: true
+    review_basis: filename_and_reference_kinematics
+    reason: "Right sidestep name and negative initial-frame lateral displacement agree."
+  - motion_idx: 127
+    motion_name: homejrhangmr_dataset_pbhc_contact_maskACCADMale2Walking_c3dB5-Walkbackwards_posespkl
+    commands: [walk backward]
+    reviewed: true
+    review_basis: filename_and_reference_kinematics
+    reason: "Backward name and negative forward displacement agree."
+  - motion_idx: 128
+    motion_name: homejrhangmr_dataset_pbhc_contact_maskACCADMale2Walking_c3dB9-Walkturnleft90_posespkl
+    commands: [turn left while walking]
+    reviewed: true
+    review_basis: filename_and_reference_kinematics
+    reason: "Left-turn name and positive net root yaw agree."
+  - motion_idx: 151
+    motion_name: homejrhangmr_dataset_pbhc_contact_maskACCADs007QkWalk1_posespkl
+    commands: [walk, walk straight]
+    reviewed: true
+    review_basis: filename_and_reference_kinematics
+    reason: "Sustained forward walk with small net heading change; both exact prompts are valid."
