@@ -2,7 +2,7 @@ schema: predactor-strict-dagger-v1
 
 # Must be the exact pi0 checkpoint used to initialize this round.
 normalizer_checkpoint: ${PREDACTOR_PI0_CHECKPOINT}
-normalizer_replica: agent
+normalizer_replica: ema_agent
 
 # Paths are references only; no aggregate dataset is copied.
 sources:

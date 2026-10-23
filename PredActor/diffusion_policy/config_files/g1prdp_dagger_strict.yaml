@@ -89,7 +89,10 @@ training:
 
 dagger:
   init_checkpoint: "${oc.env:PREDACTOR_PI0_CHECKPOINT}"
-  init_replica: agent
+  # The fixed pi0 benchmark selects EMA as the more stable deployment policy.
+  # It is copied into the trainable student once; training itself still keeps
+  # use_ema=false so the resulting pi1 has one unambiguous policy replica.
+  init_replica: ema_agent
 
 dataloader:
   batch_size: 256
