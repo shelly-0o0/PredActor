@@ -273,6 +273,14 @@ def _apply_runtime_overrides(cfg, runner_cfg, device=None, headless=None, fk_dev
               default=10.0, show_default=True,
               help='Requested duration used with --trajectory-rollout.')
 @click.option(
+    '--paper-terminal-gates/--no-paper-terminal-gates', default=True,
+    show_default=True,
+    help=(
+        'Stop trajectory exports on the architecture-study height, tilt, or '
+        'base-angular-speed gates. Disable only for full-horizon diagnostics.'
+    ),
+)
+@click.option(
     '--headless/--no-headless', default=None,
     help=(
         'Override the environment viewer and interactive guidance GUIs. '
@@ -303,7 +311,7 @@ def _apply_runtime_overrides(cfg, runner_cfg, device=None, headless=None, fk_dev
               help='Camera look-at offset X Y Z relative to the followed body.')
 def main(checkpoint, config, output_dir, device, fk_device, checkpoint_replica,
          text_command, max_steps, seed, trajectory_rollout, rollout_seconds,
-         headless, precision, web_ui, web_host, web_port,
+         paper_terminal_gates, headless, precision, web_ui, web_host, web_port,
          web_no_browser, web_joystick_device, web_joystick_type, web_perturb,
          web_perturb_max_force, web_perturb_max_torque, camera_follow, camera_follow_body,
          camera_follow_yaw, camera_smoothing_tau, camera_lookat_offset):
@@ -528,7 +536,7 @@ def main(checkpoint, config, output_dir, device, fk_device, checkpoint_replica,
         metrics_collector = PolicyRolloutCollector(
             trajectory_rollout, text_command, dt=control_dt, seed=seed,
             requested_duration_s=rollout_seconds,
-            paper_termination_gates=True)
+            paper_termination_gates=paper_terminal_gates)
 
     # Instantiate runner using Hydra
     env_runner = hydra.utils.instantiate(

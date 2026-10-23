@@ -173,6 +173,9 @@ sources:
             self.assertEqual(str(archive["command"][0]), "walk")
             self.assertEqual(int(archive["seed"]), 42)
             np.testing.assert_array_equal(archive["terminated"], [False, True])
+            np.testing.assert_array_equal(
+                archive["termination_reason"], ["", "environment"]
+            )
             self.assertAlmostEqual(result["metric_results"][0].survival_fraction, 0.02)
             self.assertFalse(result["metric_results"][0].completed_horizon)
 
@@ -226,6 +229,9 @@ sources:
             "base_ang_vel": np.zeros((1, 1, 3), dtype=np.float32),
         }
         self.assertTrue(WalkRolloutCollector._paper_terminal(history))
+        self.assertEqual(
+            WalkRolloutCollector._paper_terminal_reason(history), "root_height"
+        )
 
     def test_cosine_top1_scores_raw_prompt_candidates(self):
         predicted, scores = cosine_top1(

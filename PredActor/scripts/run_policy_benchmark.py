@@ -55,7 +55,7 @@ def main() -> None:
                 "--seed", str(seed),
                 "--trajectory-rollout", str(trajectory),
                 "--rollout-seconds", str(suite.duration_seconds),
-                "--headless", "--no-web-ui",
+                "--paper-terminal-gates", "--headless", "--no-web-ui",
             ]
             if args.precision:
                 command.extend(("--precision", args.precision))

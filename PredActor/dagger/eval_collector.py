@@ -75,7 +75,9 @@ class PolicyRolloutCollector:
         self._right_foot_rot: list[np.ndarray] = []
         self._body_pos: list[np.ndarray] = []
         self._body_rot: list[np.ndarray] = []
+        self._base_ang_vel: list[np.ndarray] = []
         self._terminated: list[bool] = []
+        self._termination_reason: list[str] = []
         self._actions: list[np.ndarray] = []
         self._inference_time_ms: list[float] = []
         self._obs_time_ms: list[float] = []
@@ -84,8 +86,8 @@ class PolicyRolloutCollector:
         self._finalized = False
 
     @staticmethod
-    def _paper_terminal(raw_history: dict) -> bool:
-        """Apply the Table-2 architecture-study terminal gates."""
+    def _paper_terminal_reason(raw_history: dict) -> str:
+        """Return the first matching Table-2 terminal gate, or an empty string."""
         root_pos = _latest_first_env(raw_history["root_pos"])
         root_rot = _latest_first_env(raw_history["root_rot"])
         # For a wxyz quaternion, world-z dot body-z is 1 - 2(x^2 + y^2).
@@ -96,13 +98,23 @@ class PolicyRolloutCollector:
             angular_speed = float(np.linalg.norm(
                 _latest_first_env(raw_history["base_ang_vel"])
             ))
-        return bool(
-            float(root_pos[2]) < 0.55
-            or pelvis_tilt >= 0.3
-            or angular_speed >= 1.0
-        )
+        if float(root_pos[2]) < 0.55:
+            return "root_height"
+        if pelvis_tilt >= 0.3:
+            return "pelvis_tilt"
+        if angular_speed >= 1.0:
+            return "base_angular_speed"
+        return ""
 
-    def _sample(self, raw_history: dict, *, terminated: bool) -> dict:
+    @classmethod
+    def _paper_terminal(cls, raw_history: dict) -> bool:
+        """Apply the Table-2 architecture-study terminal gates."""
+        return bool(cls._paper_terminal_reason(raw_history))
+
+    def _sample(
+        self, raw_history: dict, *, terminated: bool,
+        termination_reason: str = "",
+    ) -> dict:
         missing = {"root_pos", "root_rot"} - set(raw_history)
         if missing:
             raise KeyError(f"walk metric terms are missing: {sorted(missing)}")
@@ -110,7 +122,10 @@ class PolicyRolloutCollector:
             "root_pos": _latest_first_env(raw_history["root_pos"]),
             "root_rot": _latest_first_env(raw_history["root_rot"]),
             "terminated": bool(terminated),
+            "termination_reason": str(termination_reason),
         }
+        if "base_ang_vel" in raw_history:
+            sample["base_ang_vel"] = _latest_first_env(raw_history["base_ang_vel"])
         if "body_rot" in raw_history:
             body_rot = _latest_first_env(raw_history["body_rot"])
             if body_rot.ndim == 1:
@@ -129,6 +144,9 @@ class PolicyRolloutCollector:
         self._root_pos.append(sample["root_pos"])
         self._root_rot.append(sample["root_rot"])
         self._terminated.append(sample["terminated"])
+        self._termination_reason.append(sample["termination_reason"])
+        if "base_ang_vel" in sample:
+            self._base_ang_vel.append(sample["base_ang_vel"])
         if "left_foot_rot" in sample:
             self._left_foot_rot.append(sample["left_foot_rot"])
             self._right_foot_rot.append(sample["right_foot_rot"])
@@ -154,9 +172,16 @@ class PolicyRolloutCollector:
         done: bool,
     ) -> dict:
         terminated = bool(done)
+        termination_reason = "environment" if terminated else ""
         if self.paper_termination_gates:
-            terminated = terminated or self._paper_terminal(raw_history)
-        sample = self._sample(raw_history, terminated=terminated)
+            paper_reason = self._paper_terminal_reason(raw_history)
+            if paper_reason:
+                terminated = True
+                termination_reason = paper_reason
+        sample = self._sample(
+            raw_history, terminated=terminated,
+            termination_reason=termination_reason,
+        )
         if hasattr(actions, "detach"):
             actions = actions.detach().cpu().numpy()
         action = np.asarray(actions)
@@ -196,6 +221,7 @@ class PolicyRolloutCollector:
             "root_pos": np.asarray(self._root_pos),
             "root_rot": np.asarray(self._root_rot),
             "terminated": np.asarray(self._terminated, dtype=bool),
+            "termination_reason": np.asarray(self._termination_reason),
             "command": np.asarray([self.command]),
             "dt": np.asarray(self.dt),
             "actions": np.asarray(self._actions),
@@ -213,6 +239,8 @@ class PolicyRolloutCollector:
             payload["body_pos"] = np.asarray(self._body_pos)
         if len(self._body_rot) == len(self._root_pos):
             payload["body_rot"] = np.asarray(self._body_rot)
+        if len(self._base_ang_vel) == len(self._root_pos):
+            payload["base_ang_vel"] = np.asarray(self._base_ang_vel)
 
         observed_duration_s = float((len(self._root_pos) - 1) * self.dt)
         requested_duration_s = (

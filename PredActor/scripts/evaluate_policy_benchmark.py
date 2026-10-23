@@ -181,11 +181,19 @@ def main() -> None:
             metrics = navigation_metrics(archive)
             navigation_records.append((case.prompt, metrics))
             row = metrics.to_dict()
-            row.update({"command_id": case.id, "prompt": case.prompt, "seed": seed})
+            survival = rollout_survival(archive, suite.duration_seconds)
+            row.update({
+                "command_id": case.id,
+                "prompt": case.prompt,
+                "seed": seed,
+                "survival_fraction": survival["survival_fraction"],
+                "completion_rate": float(survival["completed_horizon"]),
+            })
             navigation_rows.append(row)
 
     nav_keys = [
-        "survival_rate", "cumulative_abs_delta_yaw_rad", "net_delta_yaw_rad",
+        "survival_rate", "survival_fraction", "completion_rate",
+        "cumulative_abs_delta_yaw_rad", "net_delta_yaw_rad",
         "abs_lateral_displacement_m", "forward_distance_m",
         "mean_abs_foot_yaw_difference_rad", "duration_s",
     ]
