@@ -12,6 +12,12 @@ from dagger.dataset import _weighted_counts
 from dagger.eval_collector import WalkRolloutCollector
 from dagger.manifest import DaggerManifest
 from dagger.metrics import command_distinguishability, straight_walk_metrics
+from dagger.policy_benchmark import (
+    PolicyBenchmarkSuite,
+    cosine_top1,
+    first_complete_motion_window,
+    rollout_survival,
+)
 from dagger.text_commands import command_id_for_text
 
 
@@ -147,7 +153,7 @@ sources:
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "walk_seed42.npz"
             collector = WalkRolloutCollector(
-                output, "walk", dt=0.02, seed=42
+                output, "walk", dt=0.02, seed=42, requested_duration_s=1.0
             )
             collector.start(history(0.0))
             step_data = collector.collect_step_data(
@@ -167,7 +173,67 @@ sources:
             self.assertEqual(str(archive["command"][0]), "walk")
             self.assertEqual(int(archive["seed"]), 42)
             np.testing.assert_array_equal(archive["terminated"], [False, True])
-            self.assertEqual(result["metric_results"][0].survival_rate, 0.0)
+            self.assertAlmostEqual(result["metric_results"][0].survival_fraction, 0.02)
+            self.assertFalse(result["metric_results"][0].completed_horizon)
+
+    def test_policy_benchmark_suite_has_45_text_cells(self):
+        suite_path = (
+            Path(__file__).resolve().parents[1]
+            / "dagger" / "configs" / "policy_benchmark_text9.yaml"
+        )
+        suite = PolicyBenchmarkSuite.load(suite_path)
+        self.assertEqual(len(suite.text_commands) * len(suite.seeds), 45)
+        self.assertEqual(len(suite.navigation_commands) * len(suite.seeds), 15)
+
+    def test_retrieval_window_requires_complete_post_delay_motion(self):
+        complete = {
+            "body_pos": np.zeros((251, 30, 3), dtype=np.float32),
+            "dt": np.asarray(0.02),
+        }
+        window = first_complete_motion_window(
+            complete,
+            activation_delay_seconds=3.0,
+            window_frames=60,
+            target_fps=30.0,
+        )
+        self.assertEqual(window.shape, (60, 30, 3))
+        incomplete = {
+            "body_pos": np.zeros((249, 30, 3), dtype=np.float32),
+            "dt": np.asarray(0.02),
+        }
+        self.assertIsNone(first_complete_motion_window(
+            incomplete,
+            activation_delay_seconds=3.0,
+            window_frames=60,
+            target_fps=30.0,
+        ))
+
+    def test_policy_survival_is_observed_fraction_not_binary(self):
+        archive = {
+            "root_pos": np.zeros((251, 3)),
+            "terminated": np.asarray([False] * 250 + [True]),
+            "dt": np.asarray(0.02),
+            "requested_duration_s": np.asarray(10.0),
+        }
+        result = rollout_survival(archive, 10.0)
+        self.assertAlmostEqual(result["survival_fraction"], 0.5)
+        self.assertFalse(result["completed_horizon"])
+
+    def test_paper_terminal_gate_catches_low_root_before_env_reset(self):
+        history = {
+            "root_pos": np.asarray([[[0.0, 0.0, 0.54]]], dtype=np.float32),
+            "root_rot": np.asarray([[[1.0, 0.0, 0.0, 0.0]]], dtype=np.float32),
+            "base_ang_vel": np.zeros((1, 1, 3), dtype=np.float32),
+        }
+        self.assertTrue(WalkRolloutCollector._paper_terminal(history))
+
+    def test_cosine_top1_scores_raw_prompt_candidates(self):
+        predicted, scores = cosine_top1(
+            np.asarray([[0.9, 0.1], [0.0, 1.0]]),
+            np.asarray([[1.0, 0.0], [0.0, 1.0]]),
+        )
+        np.testing.assert_array_equal(predicted, [0, 1])
+        self.assertEqual(scores.shape, (2, 2))
 
 
 if __name__ == "__main__":

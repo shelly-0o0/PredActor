@@ -266,10 +266,12 @@ def _apply_runtime_overrides(cfg, runner_cfg, device=None, headless=None, fk_dev
               help='Override the configured number of control steps.')
 @click.option('--seed', type=int, default=42, show_default=True,
               help='Seed NumPy and PyTorch for a reproducible rollout.')
-@click.option('--walk-rollout', default=None, type=click.Path(dir_okay=False),
-              help='Save a fixed-command rollout NPZ for walk-metric evaluation.')
-@click.option('--walk-seconds', type=click.FloatRange(min=0.01), default=10.0,
-              show_default=True, help='Duration used with --walk-rollout.')
+@click.option('--trajectory-rollout', '--walk-rollout', default=None,
+              type=click.Path(dir_okay=False),
+              help='Save a fixed-command trajectory NPZ for policy benchmarking.')
+@click.option('--rollout-seconds', '--walk-seconds', type=click.FloatRange(min=0.01),
+              default=10.0, show_default=True,
+              help='Requested duration used with --trajectory-rollout.')
 @click.option(
     '--headless/--no-headless', default=None,
     help=(
@@ -300,7 +302,7 @@ def _apply_runtime_overrides(cfg, runner_cfg, device=None, headless=None, fk_dev
 @click.option('--camera-lookat-offset', type=(float, float, float), default=None,
               help='Camera look-at offset X Y Z relative to the followed body.')
 def main(checkpoint, config, output_dir, device, fk_device, checkpoint_replica,
-         text_command, max_steps, seed, walk_rollout, walk_seconds,
+         text_command, max_steps, seed, trajectory_rollout, rollout_seconds,
          headless, precision, web_ui, web_host, web_port,
          web_no_browser, web_joystick_device, web_joystick_type, web_perturb,
          web_perturb_max_force, web_perturb_max_torque, camera_follow, camera_follow_body,
@@ -389,18 +391,18 @@ def main(checkpoint, config, output_dir, device, fk_device, checkpoint_replica,
         cfg, runner_cfg, device=device, headless=headless, fk_device=fk_device)
     if max_steps is not None:
         runner_cfg.max_steps = max_steps
-    if walk_rollout is not None:
+    if trajectory_rollout is not None:
         if text_command is None:
-            raise click.UsageError('--walk-rollout requires --text-command')
+            raise click.UsageError('--trajectory-rollout requires --text-command')
         control_dt = float(OmegaConf.select(
             runner_cfg, 'env.config.control_dt',
             default=OmegaConf.select(runner_cfg, 'control_dt', default=0.02)))
-        rollout_steps = int(round(walk_seconds / control_dt))
+        rollout_steps = int(round(rollout_seconds / control_dt))
         if rollout_steps < 1:
-            raise click.UsageError('--walk-seconds is shorter than one control step')
+            raise click.UsageError('--rollout-seconds is shorter than one control step')
         if max_steps is not None and max_steps != rollout_steps:
             raise click.UsageError(
-                '--max-steps conflicts with the duration implied by --walk-seconds')
+                '--max-steps conflicts with the duration implied by --rollout-seconds')
         runner_cfg.max_steps = rollout_steps
     print(f"\nUsing runner configuration: {runner}")
     print(OmegaConf.to_yaml(runner_cfg))
@@ -521,10 +523,12 @@ def main(checkpoint, config, output_dir, device, fk_device, checkpoint_replica,
             '--text-command requires an enabled CLIP task-condition provider')
 
     metrics_collector = None
-    if walk_rollout is not None:
-        from dagger.eval_collector import WalkRolloutCollector
-        metrics_collector = WalkRolloutCollector(
-            walk_rollout, text_command, dt=control_dt, seed=seed)
+    if trajectory_rollout is not None:
+        from dagger.eval_collector import PolicyRolloutCollector
+        metrics_collector = PolicyRolloutCollector(
+            trajectory_rollout, text_command, dt=control_dt, seed=seed,
+            requested_duration_s=rollout_seconds,
+            paper_termination_gates=True)
 
     # Instantiate runner using Hydra
     env_runner = hydra.utils.instantiate(

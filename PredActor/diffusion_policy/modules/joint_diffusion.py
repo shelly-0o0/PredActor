@@ -39,7 +39,7 @@ class JointDiffusionActor(SequentialDiffusionModel, BaseActor):
         n_past_steps=8,
         state_loss_scale: float = 1.0,
         sync_timesteps: bool = False,
-        action_rate_target_mode: str = "smooth",
+        action_rate_target_mode: str = "legacy_output_smooth",
         action_rate_loss_scale: float = 0.1,
         **kwargs,
     ):
@@ -68,9 +68,20 @@ class JointDiffusionActor(SequentialDiffusionModel, BaseActor):
         # Ablation controls (see test/test_codiffuse_dp_ablation/)
         self.state_loss_scale = state_loss_scale  # 0.0 → action-only loss (Factor 1 ablation)
         self.sync_timesteps = sync_timesteps       # True → same t for state & action (Factor 4 ablation)
-        if action_rate_target_mode not in {"smooth", "teacher_delta"}:
+        # ``smooth`` was the name used by the first strict-DAgger revision.
+        # Keep it as a load-compatible alias while making all three objectives
+        # explicit in newly resolved configs.
+        if action_rate_target_mode == "smooth":
+            action_rate_target_mode = "clean_action_smooth"
+        valid_action_rate_modes = {
+            "legacy_output_smooth",
+            "clean_action_smooth",
+            "teacher_delta",
+        }
+        if action_rate_target_mode not in valid_action_rate_modes:
             raise ValueError(
-                "action_rate_target_mode must be 'smooth' or 'teacher_delta'"
+                "action_rate_target_mode must be one of "
+                f"{sorted(valid_action_rate_modes)} (or the legacy alias 'smooth')"
             )
         self.action_rate_target_mode = action_rate_target_mode
         self.action_rate_loss_scale = float(action_rate_loss_scale)
@@ -722,18 +733,28 @@ class JointDiffusionActor(SequentialDiffusionModel, BaseActor):
 
         # state_loss += velocity_loss
                 
-        # Convert epsilon output back to x0 before temporal supervision.
-        action_clean_pred = (
-            self.predict_x0_from_epsilon(action_noisy, action_t, action_pred)
-            if self.action_pred_epsilon else action_pred
-        )
-        predicted_delta = action_clean_pred[:, 1:, :] - action_clean_pred[:, :-1, :]
-        if self.action_rate_target_mode == "teacher_delta":
-            # Paper-correct DAgger objective: match teacher temporal changes.
-            action_rate_target = action_traj[:, 1:, :] - action_traj[:, :-1, :]
+        if self.action_rate_target_mode == "legacy_output_smooth":
+            # Original PredActor behavior: smooth the network output directly.
+            # For epsilon-prediction models this operates in epsilon space.
+            action_rate_source = action_pred
+            action_rate_target = torch.zeros_like(action_pred[:, 1:, :])
         else:
-            # Backward-compatible behavior for existing non-DAgger configs.
-            action_rate_target = torch.zeros_like(predicted_delta)
+            # The other objectives supervise the denoised clean action x0.
+            action_rate_source = (
+                self.predict_x0_from_epsilon(action_noisy, action_t, action_pred)
+                if self.action_pred_epsilon else action_pred
+            )
+            if self.action_rate_target_mode == "teacher_delta":
+                # Match the teacher's temporal changes instead of driving every
+                # transition toward zero.
+                action_rate_target = (
+                    action_traj[:, 1:, :] - action_traj[:, :-1, :]
+                )
+            else:
+                action_rate_target = torch.zeros_like(action_rate_source[:, 1:, :])
+        predicted_delta = (
+            action_rate_source[:, 1:, :] - action_rate_source[:, :-1, :]
+        )
         action_rate_error = torch.nn.functional.mse_loss(
             predicted_delta, action_rate_target, reduction="none"
         )

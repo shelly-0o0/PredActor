@@ -1,0 +1,33 @@
+schema: predactor-policy-benchmark-v1
+name: predactor-text9-navigation-v1
+
+# Fixed evaluation seeds. Keep these unchanged across checkpoints.
+seeds: [0, 1, 2, 3, 4]
+duration_seconds: 10.0
+
+# Table-2-compatible retrieval timing and MotionCLIP window shape.
+retrieval:
+  activation_delay_seconds: 3.0
+  window_frames: 60
+  target_fps: 30.0
+
+# This is the project's frozen text9-v1 prompt set. The paper specifies nine
+# prompts but does not enumerate their exact strings in the public protocol;
+# do not describe these strings as an exact reproduction of its hidden list.
+text_commands:
+  - {id: stand, prompt: "stands still"}
+  - {id: walk, prompt: "walk"}
+  - {id: jog, prompt: "jogging"}
+  - {id: squat, prompt: "squats down"}
+  - {id: wave, prompt: "waves their hand"}
+  - {id: kick, prompt: "kicks forward"}
+  - {id: dance, prompt: "dancing"}
+  - {id: jump, prompt: "jumps up"}
+  - {id: bend, prompt: "bends over"}
+
+# Extra diagnostic cells for the original straight-walk failure. These are
+# reported separately and never folded into the text9 retrieval score.
+navigation_commands:
+  - {id: walk_straight, prompt: "walk straight"}
+  - {id: turn_left_walking, prompt: "turn left while walking"}
+  - {id: turn_right_walking, prompt: "turn right while walking"}

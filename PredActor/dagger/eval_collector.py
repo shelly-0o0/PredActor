@@ -1,13 +1,13 @@
-"""Closed-loop trajectory export for strict DAgger acceptance tests."""
+"""Closed-loop trajectory export for strict DAgger and policy benchmarks."""
 
 from __future__ import annotations
 
 from pathlib import Path
+from dataclasses import asdict, dataclass
 from typing import Any
 
 import numpy as np
 
-from dagger.metrics import straight_walk_metrics
 from diffusion_policy.dataset.g1_dataset import BODY_NAMES
 
 
@@ -21,8 +21,23 @@ def _latest_first_env(value: Any) -> np.ndarray:
     return np.asarray(array[0, -1]).copy()
 
 
-class WalkRolloutCollector:
-    """Collect one fixed-command rollout and save a metrics-compatible NPZ.
+@dataclass(frozen=True)
+class RolloutSummary:
+    """Small JSON-safe summary returned through :class:`EnvRunner`."""
+
+    survival_fraction: float
+    completed_horizon: bool
+    observed_duration_s: float
+    requested_duration_s: float
+    inference_time_mean_ms: float
+    inference_time_p95_ms: float
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+class PolicyRolloutCollector:
+    """Collect one fixed-command rollout and save a benchmark-compatible NPZ.
 
     The runner calls :meth:`start` once with the reset state and :meth:`step`
     after each control step. Returning ``False`` from ``step`` asks the runner
@@ -37,6 +52,8 @@ class WalkRolloutCollector:
         *,
         dt: float,
         seed: int | None = None,
+        requested_duration_s: float | None = None,
+        paper_termination_gates: bool = False,
     ) -> None:
         if dt <= 0:
             raise ValueError("dt must be positive")
@@ -44,14 +61,46 @@ class WalkRolloutCollector:
         self.command = str(command)
         self.dt = float(dt)
         self.seed = None if seed is None else int(seed)
+        self.requested_duration_s = (
+            None if requested_duration_s is None else float(requested_duration_s)
+        )
+        if self.requested_duration_s is not None and self.requested_duration_s <= 0:
+            raise ValueError("requested_duration_s must be positive")
+        self.paper_termination_gates = bool(paper_termination_gates)
         self.left_foot_index = BODY_NAMES.index("left_ankle_roll_link")
         self.right_foot_index = BODY_NAMES.index("right_ankle_roll_link")
         self._root_pos: list[np.ndarray] = []
         self._root_rot: list[np.ndarray] = []
         self._left_foot_rot: list[np.ndarray] = []
         self._right_foot_rot: list[np.ndarray] = []
+        self._body_pos: list[np.ndarray] = []
+        self._body_rot: list[np.ndarray] = []
         self._terminated: list[bool] = []
+        self._actions: list[np.ndarray] = []
+        self._inference_time_ms: list[float] = []
+        self._obs_time_ms: list[float] = []
+        self._step_time_ms: list[float] = []
+        self._rewards: list[float] = []
         self._finalized = False
+
+    @staticmethod
+    def _paper_terminal(raw_history: dict) -> bool:
+        """Apply the Table-2 architecture-study terminal gates."""
+        root_pos = _latest_first_env(raw_history["root_pos"])
+        root_rot = _latest_first_env(raw_history["root_rot"])
+        # For a wxyz quaternion, world-z dot body-z is 1 - 2(x^2 + y^2).
+        _, x, y, _ = np.asarray(root_rot, dtype=np.float64)
+        pelvis_tilt = float(np.arccos(np.clip(1.0 - 2.0 * (x * x + y * y), -1.0, 1.0)))
+        angular_speed = 0.0
+        if "base_ang_vel" in raw_history:
+            angular_speed = float(np.linalg.norm(
+                _latest_first_env(raw_history["base_ang_vel"])
+            ))
+        return bool(
+            float(root_pos[2]) < 0.55
+            or pelvis_tilt >= 0.3
+            or angular_speed >= 1.0
+        )
 
     def _sample(self, raw_history: dict, *, terminated: bool) -> dict:
         missing = {"root_pos", "root_rot"} - set(raw_history)
@@ -68,6 +117,12 @@ class WalkRolloutCollector:
                 body_rot = body_rot.reshape(len(BODY_NAMES), 4)
             sample["left_foot_rot"] = body_rot[self.left_foot_index]
             sample["right_foot_rot"] = body_rot[self.right_foot_index]
+            sample["body_rot"] = body_rot
+        if "body_pos" in raw_history:
+            body_pos = _latest_first_env(raw_history["body_pos"])
+            if body_pos.ndim == 1:
+                body_pos = body_pos.reshape(len(BODY_NAMES), 3)
+            sample["body_pos"] = body_pos
         return sample
 
     def _append(self, sample: dict) -> None:
@@ -77,6 +132,10 @@ class WalkRolloutCollector:
         if "left_foot_rot" in sample:
             self._left_foot_rot.append(sample["left_foot_rot"])
             self._right_foot_rot.append(sample["right_foot_rot"])
+        if "body_pos" in sample:
+            self._body_pos.append(sample["body_pos"])
+        if "body_rot" in sample:
+            self._body_rot.append(sample["body_rot"])
 
     def start(self, raw_history: dict) -> None:
         if self._root_pos:
@@ -94,11 +153,31 @@ class WalkRolloutCollector:
         reward,
         done: bool,
     ) -> dict:
-        del actions, inference_time_ms, obs_time_ms, step_time_ms, reward
-        return self._sample(raw_history, terminated=done)
+        terminated = bool(done)
+        if self.paper_termination_gates:
+            terminated = terminated or self._paper_terminal(raw_history)
+        sample = self._sample(raw_history, terminated=terminated)
+        if hasattr(actions, "detach"):
+            actions = actions.detach().cpu().numpy()
+        action = np.asarray(actions)
+        if action.ndim >= 2 and action.shape[0] == 1:
+            action = action[0]
+        sample.update({
+            "action": np.asarray(action).copy(),
+            "inference_time_ms": float(inference_time_ms),
+            "obs_time_ms": float(obs_time_ms),
+            "step_time_ms": float(step_time_ms),
+            "reward": float(np.asarray(reward).reshape(-1)[0]),
+        })
+        return sample
 
     def step(self, step_data: dict) -> bool:
         self._append(step_data)
+        self._actions.append(step_data["action"])
+        self._inference_time_ms.append(step_data["inference_time_ms"])
+        self._obs_time_ms.append(step_data["obs_time_ms"])
+        self._step_time_ms.append(step_data["step_time_ms"])
+        self._rewards.append(step_data["reward"])
         return not step_data["terminated"]
 
     def flush_episode(self) -> None:
@@ -119,29 +198,54 @@ class WalkRolloutCollector:
             "terminated": np.asarray(self._terminated, dtype=bool),
             "command": np.asarray([self.command]),
             "dt": np.asarray(self.dt),
+            "actions": np.asarray(self._actions),
+            "inference_time_ms": np.asarray(self._inference_time_ms),
+            "obs_time_ms": np.asarray(self._obs_time_ms),
+            "step_time_ms": np.asarray(self._step_time_ms),
+            "rewards": np.asarray(self._rewards),
         }
         if self.seed is not None:
             payload["seed"] = np.asarray(self.seed)
         if len(self._left_foot_rot) == len(self._root_pos):
             payload["left_foot_rot"] = np.asarray(self._left_foot_rot)
             payload["right_foot_rot"] = np.asarray(self._right_foot_rot)
+        if len(self._body_pos) == len(self._root_pos):
+            payload["body_pos"] = np.asarray(self._body_pos)
+        if len(self._body_rot) == len(self._root_pos):
+            payload["body_rot"] = np.asarray(self._body_rot)
+
+        observed_duration_s = float((len(self._root_pos) - 1) * self.dt)
+        requested_duration_s = (
+            observed_duration_s
+            if self.requested_duration_s is None
+            else self.requested_duration_s
+        )
+        payload["requested_duration_s"] = np.asarray(requested_duration_s)
 
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(self.output_path, **payload)
-        metrics = straight_walk_metrics(
-            payload["root_pos"],
-            payload["root_rot"],
-            dt=self.dt,
-            terminated=payload["terminated"],
-            left_foot_rot=payload.get("left_foot_rot"),
-            right_foot_rot=payload.get("right_foot_rot"),
+        inference = payload["inference_time_ms"]
+        summary = RolloutSummary(
+            survival_fraction=float(min(1.0, observed_duration_s / requested_duration_s)),
+            completed_horizon=bool(
+                observed_duration_s + self.dt * 0.5 >= requested_duration_s
+                and not payload["terminated"].any()
+            ),
+            observed_duration_s=observed_duration_s,
+            requested_duration_s=requested_duration_s,
+            inference_time_mean_ms=(float(np.mean(inference)) if len(inference) else float("nan")),
+            inference_time_p95_ms=(float(np.percentile(inference, 95)) if len(inference) else float("nan")),
         )
         print(
             f"[WalkRolloutCollector] saved {len(self._root_pos)} samples to "
             f"{self.output_path}"
         )
         return {
-            "metric_results": [metrics],
+            "metric_results": [summary],
             "wandb": {},
             "table": [],
         }
+
+
+# Backward-compatible name used by the original walk-only CLI and tests.
+WalkRolloutCollector = PolicyRolloutCollector

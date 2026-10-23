@@ -38,6 +38,11 @@ policy:
     enable: false
   actor:
     _target_: diffusion_policy.modules.diffuse_cprdp.DiffuseCPRDP
+    # Smooth denoised actions. With the current predict_epsilon=false setup
+    # this is numerically identical to legacy_output_smooth, but remains
+    # correct if epsilon prediction is enabled later.
+    action_rate_target_mode: clean_action_smooth
+    action_rate_loss_scale: 0.1
     enable_root_pos_guide: false
     whole_body_guidance_config:
       enabled: true

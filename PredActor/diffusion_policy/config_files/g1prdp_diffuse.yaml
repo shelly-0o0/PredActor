@@ -36,6 +36,8 @@ policy:
   condition_dropout_config:
     enable: false
   actor:
+    action_rate_target_mode: clean_action_smooth
+    action_rate_loss_scale: 0.1
     enable_root_pos_guide: false
     whole_body_guidance_config:
       enabled: true
