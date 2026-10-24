@@ -1,0 +1,103 @@
+_target_: dagger.canonical_teacher.CanonicalTeacherTrainer
+
+defaults:
+  - defaults/data_collection
+  - defaults/dataloader
+  - defaults/val_dataloader
+  - defaults/ema
+  - defaults/logging_base
+  - defaults/optimizer
+  - defaults/policy/cond_codiffuse
+  - defaults/dataset/base
+  - defaults/training
+  - defaults/checkpoint
+  - defaults/env_runner
+  - defaults/env/mujoco
+  - _self_
+
+exp_name: canonical-teacher
+output_dir: "${oc.env:PREDACTOR_OUTPUT_ROOT,./outputs}/"
+dataset_dir: "."
+
+logging:
+  group: canonical-teacher
+  id: null
+  mode: offline
+  name: canonical-teacher
+  project: diffuse_cloc
+  resume: false
+  tags: [g1prdp, canonical-teacher, exact-text, straight-walk]
+
+policy:
+  condition_dropout_config:
+    enable: false
+  actor:
+    _target_: diffusion_policy.modules.diffuse_cprdp.DiffuseCPRDP
+    enable_root_pos_guide: false
+    whole_body_guidance_config:
+      enabled: false
+    backbone:
+      x_input_dim: 384
+      x_output_dim: 384
+      cond_dim: 608
+      n_cond_steps: 4
+      cross_attn_mode: full
+    clean_past_state: false
+    no_state_override: true
+    data_profile: g1_prdp_standard_cond
+    ddim_steps: 5
+    ddim_eta: 0.0
+    use_ns_ddim: true
+    randomize_noise_schedule: true
+    action_weight_schedule: constant-to-8
+    action_rate_target_mode: clean_action_smooth
+    action_rate_loss_scale: 0.1
+
+dataset:
+  _target_: dagger.canonical_teacher.CanonicalTeacherDataset
+  data_profile: g1_prdp_standard_cond
+  zarr_path: "${oc.env:PREDACTOR_D0_ZARR}"
+  canonical_zarr_path: "${oc.env:PREDACTOR_CANONICAL_ZARR}"
+  d0_command_map_path: "${oc.env:PREDACTOR_COMMAND_MAP}"
+  normalizer_checkpoint: "${oc.env:PREDACTOR_PI0_CHECKPOINT}"
+  normalizer_replica: ema_agent
+  n_task_steps: 4
+  pad_before: 0
+  pad_after: 0
+  val_ratio: 0.0
+  load_to_memory: false
+  symm_aug: false
+  d0_weight: 0.60
+  canonical_weight: 0.40
+  epoch_size: 100000
+  dropout_config_train_overrides:
+    text_cond:
+      enabled: false
+  data_sample_rate: 0.0
+
+optimizer:
+  learning_rate: 1.0e-5
+  weight_decay: 0.001
+  betas: [0.9, 0.95]
+
+training:
+  num_epochs: 2
+  resume: false
+  use_ema: false
+  lr_scheduler: constant
+  lr_warmup_steps: 0
+  checkpoint_every: 1
+  save_epoch_checkpoints: true
+  save_terminal_checkpoint: true
+
+canonical:
+  init_checkpoint: "${oc.env:PREDACTOR_PI0_CHECKPOINT}"
+  init_replica: ema_agent
+
+dataloader:
+  batch_size: 256
+  num_workers: 8
+  persistent_workers: true
+  pin_memory: true
+  shuffle: true
+  prefetch_factor: 2
