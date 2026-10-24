@@ -221,6 +221,11 @@ def _apply_runtime_overrides(cfg, runner_cfg, device=None, headless=None, fk_dev
         env_cfg = OmegaConf.select(runner_cfg, 'env.config', default=None)
         if env_cfg is not None and OmegaConf.select(env_cfg, 'headless', default=None) is not None:
             OmegaConf.update(env_cfg, 'headless', bool(headless))
+        if (
+            env_cfg is not None
+            and OmegaConf.select(env_cfg, 'enable_viewer', default=None) is not None
+        ):
+            OmegaConf.update(env_cfg, 'enable_viewer', not bool(headless))
 
         if headless:
             # These components may start GUI threads during policy/provider
