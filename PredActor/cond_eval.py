@@ -93,6 +93,26 @@ def _is_dagger_checkpoint(payload):
     return str(target).endswith('DaggerTrainer')
 
 
+def _model_only_eval_payload(payload, checkpoint_replica):
+    """Keep only the selected model state required for inference.
+
+    Training checkpoints may contain optimizer groups that were pruned after
+    the trainer was constructed (for example canonical calibration freezes all
+    but the condition path).  A fresh evaluation trainer has the unpruned
+    optimizer layout, so restoring optimizer state is both unnecessary and can
+    fail before the otherwise-compatible model weights are loaded.
+    """
+    state_dicts = payload.get('state_dicts', {})
+    if checkpoint_replica not in state_dicts:
+        raise ValueError(f'Checkpoint has no {checkpoint_replica!r} replica')
+    return {
+        'cfg': payload.get('cfg'),
+        'state_dicts': {'agent': state_dicts[checkpoint_replica]},
+        'optimizer_state_dicts': {},
+        'pickles': {},
+    }
+
+
 def _load_eval_agent(checkpoint, payload, cfg, device, checkpoint_replica='agent'):
     """Load standard checkpoints normally and DAgger checkpoints strictly."""
     if _is_dagger_checkpoint(payload):
@@ -115,26 +135,15 @@ def _load_eval_agent(checkpoint, payload, cfg, device, checkpoint_replica='agent
 
     if checkpoint_replica not in {'agent', 'ema_agent'}:
         raise ValueError(f'Unsupported checkpoint replica: {checkpoint_replica}')
-    if checkpoint_replica not in payload.get('state_dicts', {}):
-        raise ValueError(f'Checkpoint has no {checkpoint_replica!r} replica')
-    # Load either replica into one actor, avoiding deepcopy of GUI-bearing WBG.
-    payload = dict(payload)
-    payload['state_dicts'] = dict(payload['state_dicts'])
-    payload['state_dicts']['agent'] = payload['state_dicts'][checkpoint_replica]
+    # Load only the selected replica into one actor.  Evaluation deliberately
+    # excludes optimizer, scaler and epoch bookkeeping state.
+    payload = _model_only_eval_payload(payload, checkpoint_replica)
     trainer_cfg = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True))
     trainer_cfg.training.use_ema = False
     cls = hydra.utils.get_class(trainer_cfg._target_)
     trainer: BaseTrainer = cls(trainer_cfg, init_wandb=False)
-    exclude_keys = tuple(
-        key for key in payload.get('state_dicts', {})
-        if getattr(trainer, key, None) is None
-    )
-    if exclude_keys:
-        print(
-            f'cond_eval evaluates {checkpoint_replica}; skipping unused '
-            f'checkpoint replicas: {list(exclude_keys)}.')
     trainer.load_payload(
-        payload, exclude_keys=exclude_keys, include_keys=None)
+        payload, exclude_keys=(), include_keys=None)
     bc_agent = trainer.agent
     bc_agent.to(device)
     bc_agent.eval()

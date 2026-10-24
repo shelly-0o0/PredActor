@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from cond_eval import _model_only_eval_payload
 from dagger.branching import BranchWindow
 from dagger.command_map import MotionCommandMap, validate_command_geometry
 from dagger.collector import CollectionConfig, StrictDaggerCollector
@@ -25,6 +26,28 @@ from diffusion_policy.task_provider.fixed_embedding import FixedEmbeddingProvide
 
 
 class StrictDaggerTests(unittest.TestCase):
+    def test_eval_payload_excludes_training_optimizer_state(self):
+        agent_state = {"weight": torch.tensor([1.0])}
+        ema_state = {"weight": torch.tensor([2.0])}
+        payload = {
+            "cfg": {"name": "test"},
+            "state_dicts": {
+                "agent": agent_state,
+                "ema_agent": ema_state,
+                "optimizer": {"parameter_groups": [1, 2, 3]},
+                "grad_scaler": {"scale": 1.0},
+            },
+            "optimizer_state_dicts": {
+                "diffusion": {"param_groups": [{"params": [1, 2, 3]}]},
+            },
+            "pickles": {"epoch": b"training-only"},
+        }
+        result = _model_only_eval_payload(payload, "ema_agent")
+        self.assertEqual(set(result["state_dicts"]), {"agent"})
+        self.assertIs(result["state_dicts"]["agent"], ema_state)
+        self.assertEqual(result["optimizer_state_dicts"], {})
+        self.assertEqual(result["pickles"], {})
+
     def test_fixed_embedding_provider_uses_named_archive_row(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "prototypes.npz"
