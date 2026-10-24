@@ -9,7 +9,7 @@ import torch
 from omegaconf import OmegaConf
 
 from cond_eval import _model_only_eval_payload, _resolve_runtime_input_paths
-from dagger.branching import BranchWindow
+from dagger.branching import BranchWindow, save_branch_npz
 from dagger.command_map import MotionCommandMap, validate_command_geometry
 from dagger.collector import CollectionConfig, StrictDaggerCollector
 from dagger.dataset import _weighted_counts
@@ -23,10 +23,63 @@ from dagger.policy_benchmark import (
     rollout_survival,
 )
 from dagger.text_commands import command_id_for_text
+from dagger.same_origin import audit_same_origin_group
+from dagger.isaaclab_adapter import state_max_abs
 from diffusion_policy.task_provider.fixed_embedding import FixedEmbeddingProvider
 
 
 class StrictDaggerTests(unittest.TestCase):
+    def test_isaaclab_state_comparison_is_fail_closed(self):
+        left = {
+            "root_pos": np.zeros(3, dtype=np.float32),
+            "motion_idx": np.asarray(1, dtype=np.int64),
+        }
+        right = {key: value.copy() for key, value in left.items()}
+        right["root_pos"][1] = 2.5e-6
+        self.assertAlmostEqual(state_max_abs(left, right), 2.5e-6)
+        right["motion_idx"] = np.asarray(2, dtype=np.int64)
+        self.assertEqual(state_max_abs(left, right), float("inf"))
+
+    def test_same_origin_audit_requires_triplet_and_distinct_teacher_targets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = []
+            physical = {
+                "root_pos": np.arange(12, dtype=np.float32).reshape(4, 3),
+                "motion_latent": np.zeros((4, 2), dtype=np.float32),
+            }
+            teacher_state = {
+                "root_pos": np.concatenate([
+                    physical["root_pos"][-1:],
+                    np.ones((16, 3), dtype=np.float32),
+                ]),
+                "motion_latent": np.zeros((17, 2), dtype=np.float32),
+            }
+            for index, command_id in enumerate((1, 5, 6)):
+                prefix = {key: value.copy() for key, value in physical.items()}
+                prefix["motion_latent"][:] = index
+                continuation = {key: value.copy() for key, value in teacher_state.items()}
+                continuation["motion_latent"][:] = index
+                window = BranchWindow(
+                    student_prefix=prefix,
+                    student_actions=np.zeros((3, 29), dtype=np.float32),
+                    teacher_states=continuation,
+                    teacher_actions=np.full((17, 29), index + 1, dtype=np.float32),
+                    command_id=command_id,
+                    role="origin" if index == 0 else "counterfactual",
+                )
+                path = root / f"branch_{index:03d}.npz"
+                save_branch_npz(path, window, metadata={
+                    "pair_id": "origin-0001",
+                    "live_teacher_commits": 0,
+                    "live_learner_commits": 7,
+                    "live_restore_max_abs": 0.0,
+                })
+                paths.append(path)
+            result = audit_same_origin_group(paths)
+            self.assertEqual(result.commands, (1, 5, 6))
+            self.assertGreater(result.min_teacher_action_rmse, 0.0)
+
     def test_eval_resolves_package_assets_and_repository_artifacts(self):
         with tempfile.TemporaryDirectory() as directory:
             repository = Path(directory)

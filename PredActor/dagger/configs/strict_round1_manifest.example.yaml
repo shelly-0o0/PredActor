@@ -13,15 +13,11 @@ sources:
   - name: round1_origins
     path: ${PREDACTOR_DAGGER_ROOT}/round_01/origins.zarr
     role: origin
-    weight: 0.25
-  - name: round1_recoveries
-    path: ${PREDACTOR_DAGGER_ROOT}/round_01/recoveries.zarr
-    role: recovery
-    weight: 0.10
-  - name: round1_disturbance
-    path: ${PREDACTOR_DAGGER_ROOT}/round_01/disturbance.zarr
-    role: disturbance
-    weight: 0.05
+    weight: 0.20
+  - name: round1_counterfactuals
+    path: ${PREDACTOR_DAGGER_ROOT}/round_01/counterfactuals.zarr
+    role: counterfactual
+    weight: 0.20
 
 text_conditioning:
   embeddings: ${PREDACTOR_DAGGER_ROOT}/text/canonical_clip_vit_b32.npz

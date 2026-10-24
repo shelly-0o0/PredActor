@@ -46,11 +46,31 @@ class DaggerTrainer(OfflineTrainer):
         if loaded_hash != expected_hash:
             raise RuntimeError("pi0 normalizer changed while loading DAgger initialization")
 
+        # The normalizer stores fitted statistics as Parameters.  It is a
+        # fixed pi0 contract, not part of the DAgger optimization problem.
+        normalizer_ids = {id(parameter) for parameter in self.agent.normalizer.parameters()}
+        for parameter in self.agent.normalizer.parameters():
+            parameter.requires_grad_(False)
+        for optimizer in self.optimizer.values():
+            for group in optimizer.param_groups:
+                group["params"] = [
+                    parameter for parameter in group["params"]
+                    if id(parameter) not in normalizer_ids
+                ]
+        if any(
+            id(parameter) in normalizer_ids
+            for optimizer in self.optimizer.values()
+            for group in optimizer.param_groups
+            for parameter in group["params"]
+        ):
+            raise RuntimeError("pi0 normalizer remains in the DAgger optimizer")
+
         audit = {
             "schema": "predactor-strict-dagger-train-v1",
             "init_checkpoint": str(checkpoint),
             "init_replica": replica,
             "normalizer_sha256": loaded_hash,
+            "normalizer_frozen": True,
             "manifest": str(dataset.manifest.path),
             "d0_weight": dataset.manifest.d0_weight,
             "dagger_weight": dataset.manifest.dagger_weight,

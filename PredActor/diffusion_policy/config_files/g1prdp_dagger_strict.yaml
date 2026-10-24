@@ -64,19 +64,24 @@ dataset:
   # Runtime reflection keeps CLIP left/right text unchanged and would create
   # contradictory labels. Use an explicit counterfactual shard instead.
   symm_aug: false
-  text_replacement_probability: 0.35
+  # Every new DAgger window uses the exact command embedding. D0 retains its
+  # original motion latent, so the overall epoch is still 60% motion-latent.
+  text_replacement_probability: 1.0
   dropout_config_train_overrides:
     text_cond:
       enabled: false
   data_sample_rate: 0.0  # ignored: the normalizer is loaded from pi0
 
 optimizer:
-  learning_rate: 1.5e-5
+  learning_rate: 1.0e-5
   weight_decay: 0.001
   betas: [0.9, 0.95]
 
 training:
-  num_epochs: 4
+  # The first same-origin run is a 98-step pilot. Extend only after closed-loop
+  # navigation gates pass; do not blindly repeat the failed calibration curve.
+  num_epochs: 1
+  max_train_steps: 98
   resume: false
   # Short low-LR DAgger updates are evaluated from the actual student. An EMA
   # initialized at pi0 would lag toward pi0 and create a second ambiguous pi1.

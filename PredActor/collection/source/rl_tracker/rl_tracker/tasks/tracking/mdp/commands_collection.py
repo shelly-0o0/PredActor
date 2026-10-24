@@ -899,6 +899,63 @@ class MotionCollectionCommand(CommandTerm):
             env_ids=env_ids,
         )
 
+    def dagger_set_canonical_phase(self, env_id: int, motion_idx: int,
+                                   phase: int) -> None:
+        """Attach one canonical motion/phase without resetting robot physics.
+
+        Strict DAgger first clones a learner-visited physical state into a
+        shadow lane.  This method changes only the reference tracked by that
+        lane; unlike ``_assign_task_to_env`` it never rewrites the robot state.
+        """
+        env_id = int(env_id)
+        motion_idx = int(motion_idx)
+        phase = int(phase)
+        if not 0 <= env_id < self.num_envs:
+            raise IndexError(f"environment id out of range: {env_id}")
+        if not 0 <= motion_idx < self.num_motions:
+            raise IndexError(f"canonical motion id out of range: {motion_idx}")
+        length = int(self.motion.file_lengths[motion_idx].item())
+        if not 0 <= phase < length:
+            raise ValueError(
+                f"canonical phase {phase} outside motion length {length}"
+            )
+        self.motion_idx[env_id] = motion_idx
+        self.motion_length[env_id] = length
+        self.time_steps[env_id] = phase
+        self.buffer_start_time[env_id] = phase
+        self.direction_yaw[env_id] = 0.0
+        self.env_is_idle[env_id] = 0
+        ids = torch.tensor([env_id], dtype=torch.long, device=self.device)
+        self._update_buffers(ids)
+        self._dagger_update_relative_targets_selected(ids)
+
+    def _dagger_update_relative_targets_selected(
+            self, env_ids: torch.Tensor) -> None:
+        """Refresh aligned reference buffers only for explicit shadow rows."""
+        env_ids = torch.as_tensor(
+            env_ids, dtype=torch.long, device=self.device
+        ).flatten()
+        if len(env_ids) == 0:
+            return
+        body_count = len(self.cfg.body_names)
+        anchor_pos = self.anchor_pos_w[env_ids, None, :].repeat(1, body_count, 1)
+        anchor_quat = self.anchor_quat_w[env_ids, None, :].repeat(1, body_count, 1)
+        robot_pos = self.robot_anchor_pos_w[env_ids, None, :].repeat(
+            1, body_count, 1
+        )
+        robot_quat = self.robot_anchor_quat_w[env_ids, None, :].repeat(
+            1, body_count, 1
+        )
+        delta_pos = robot_pos.clone()
+        delta_pos[..., 2] = anchor_pos[..., 2]
+        delta_ori = yaw_quat(quat_mul(robot_quat, quat_inv(anchor_quat)))
+        self.body_quat_relative_w[env_ids] = quat_mul(
+            delta_ori, self.body_quat_w[env_ids]
+        )
+        self.body_pos_relative_w[env_ids] = delta_pos + quat_apply(
+            delta_ori, self.body_pos_w[env_ids] - anchor_pos
+        )
+
     def _update_command(self):
         """Update command each step."""
         # Only advance time for non-idle envs
