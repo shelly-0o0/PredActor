@@ -15,6 +15,18 @@ from diffusion_policy.utils.replay_buffer import ReplayBuffer
 from diffusion_policy.utils.sampler import SequenceSampler
 
 
+# Raw fields consumed by the active G1 profile plus auditable task identity.
+# D0 also stores motion_ref_* telemetry that is not an input to this policy;
+# requiring those fields in D_i would copy teacher-only diagnostics into every
+# DAgger shard without affecting the model.
+MODEL_RAW_KEYS = {
+    "body_pos", "body_rot", "body_lin_vel", "body_ang_vel",
+    "joint_pos", "joint_vel", "root_pos", "root_rot",
+    "projected_gravity", "base_lin_vel", "base_ang_vel", "last_actions",
+    "motion_latent", "motion_idx", "action",
+}
+
+
 def _weighted_counts(weights: list[float], total: int) -> list[int]:
     if total < len(weights):
         raise ValueError("epoch_size must be at least the number of sources")
@@ -111,7 +123,13 @@ class StrictDaggerDataset(OfflineDataset):
         self.action_reflect_op = primary.action_reflect_op
         self.cond_reflect_op = primary.cond_reflect_op
         self.ee_idxs = primary.ee_idxs
-        self._base_keys = (set(primary.replay_buffer.keys()) - {"act"}) | {"action"}
+        available = (set(primary.replay_buffer.keys()) - {"act"}) | {"action"}
+        missing_model_fields = MODEL_RAW_KEYS - available
+        if missing_model_fields:
+            raise ValueError(
+                f"D0 lacks model-required raw fields: {sorted(missing_model_fields)}"
+            )
+        self._base_keys = set(MODEL_RAW_KEYS)
 
         total = int(epoch_size) if epoch_size is not None else sum(map(len, self.datasets))
         self.source_counts = _weighted_counts(
