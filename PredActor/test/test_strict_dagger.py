@@ -6,8 +6,9 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from omegaconf import OmegaConf
 
-from cond_eval import _model_only_eval_payload
+from cond_eval import _model_only_eval_payload, _resolve_runtime_input_paths
 from dagger.branching import BranchWindow
 from dagger.command_map import MotionCommandMap, validate_command_geometry
 from dagger.collector import CollectionConfig, StrictDaggerCollector
@@ -26,6 +27,40 @@ from diffusion_policy.task_provider.fixed_embedding import FixedEmbeddingProvide
 
 
 class StrictDaggerTests(unittest.TestCase):
+    def test_eval_resolves_package_assets_and_repository_artifacts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory)
+            evaluator = repository / "PredActor"
+            asset = evaluator / "assets" / "robot.xml"
+            checkpoint = repository / "Artifacts" / "clip.pt"
+            asset.parent.mkdir(parents=True)
+            checkpoint.parent.mkdir(parents=True)
+            asset.write_bytes(b"xml")
+            checkpoint.write_bytes(b"checkpoint")
+            cfg = OmegaConf.create({
+                "env_runner": {
+                    "env": {"config": {
+                        "xml_path": "./assets/robot.xml",
+                        "urdf_path": None,
+                    }},
+                    "task_cond_providers": {
+                        "clip_teleop": {
+                            "checkpoint_path": "./Artifacts/clip.pt",
+                        },
+                    },
+                },
+            })
+            _resolve_runtime_input_paths(
+                cfg, evaluator_root=evaluator, repository_root=repository
+            )
+            self.assertEqual(
+                cfg.env_runner.env.config.xml_path, str(asset.resolve())
+            )
+            self.assertEqual(
+                cfg.env_runner.task_cond_providers.clip_teleop.checkpoint_path,
+                str(checkpoint.resolve()),
+            )
+
     def test_eval_payload_excludes_training_optimizer_state(self):
         agent_state = {"weight": torch.tensor([1.0])}
         ema_state = {"weight": torch.tensor([2.0])}

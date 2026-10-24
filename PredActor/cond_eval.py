@@ -83,6 +83,51 @@ DEFAULT_CONFIG = 'g1prdp_cond_diffuse.yaml'
 DEFAULT_DEVICE = 'cuda:0' if torch.cuda.is_available() else 'cpu'
 
 
+def _resolve_runtime_input_paths(
+    cfg,
+    evaluator_root=EVALUATOR_ROOT,
+    repository_root=REPOSITORY_ROOT,
+):
+    """Resolve known input files independently of the caller's cwd.
+
+    Saved configs are fully resolved and can therefore contain both
+    ``./assets/...`` (relative to the PredActor package) and
+    ``./Artifacts/...`` (relative to the repository root).  No single cwd can
+    satisfy both layouts.  Only rewrite a relative path when a corresponding
+    existing file is found under one of the two stable roots.
+    """
+    evaluator_root = Path(evaluator_root).expanduser().resolve()
+    repository_root = Path(repository_root).expanduser().resolve()
+
+    def resolve_field(field):
+        value = OmegaConf.select(cfg, field, default=None)
+        if not isinstance(value, str) or not value:
+            return
+        path = Path(value).expanduser()
+        if path.is_absolute():
+            return
+        for base in (evaluator_root, repository_root):
+            candidate = (base / path).resolve()
+            if candidate.is_file():
+                OmegaConf.update(cfg, field, str(candidate))
+                print(f'[cond_eval] Resolved {field}: {candidate}')
+                return
+
+    for field in (
+        'env_runner.env.config.xml_path',
+        'env_runner.env.config.urdf_path',
+    ):
+        resolve_field(field)
+
+    providers = OmegaConf.select(
+        cfg, 'env_runner.task_cond_providers', default=None)
+    if providers is not None:
+        for name in providers:
+            resolve_field(
+                f'env_runner.task_cond_providers.{name}.checkpoint_path')
+    return cfg
+
+
 def _is_dagger_checkpoint(payload):
     checkpoint_cfg = payload.get('cfg')
     if checkpoint_cfg is None:
@@ -386,6 +431,8 @@ def main(checkpoint, config, output_dir, device, fk_device, checkpoint_replica,
         print("  (detected standard config format — composing defaults)")
         cfg = load_config(config_path)
         OmegaConf.resolve(cfg)
+
+    _resolve_runtime_input_paths(cfg)
 
     # Web mode owns every interactive source. Disable legacy windows before
     # constructing the policy/provider so no Tk, stdin or MuJoCo viewer races it.
