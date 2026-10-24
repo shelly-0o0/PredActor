@@ -15,7 +15,6 @@ text_embedding_archive="${6:-}"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 predactor_dir="$(cd "$script_dir/.." && pwd)"
-repository_dir="$(cd "$predactor_dir/.." && pwd)"
 
 mkdir -p "$output_dir/runtime"
 
@@ -51,7 +50,10 @@ run_case() {
     --no-web-ui
 }
 
-cd "$repository_dir"
+# The resolved training config keeps public asset paths relative to the
+# PredActor package directory (for example ./assets/...); run from that same
+# directory so both MJCF and URDF resolution are deterministic.
+cd "$predactor_dir"
 run_case walk-straight "walk straight"
 run_case turn-left-walking "turn left while walking"
 run_case turn-right-walking "turn right while walking"
