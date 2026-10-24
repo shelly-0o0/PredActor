@@ -66,6 +66,7 @@ def parse_args() -> argparse.Namespace:
 def _conditioned_state(state, bank, motion_idx, phase):
     result = {key: np.asarray(state[key]).copy() for key in POLICY_STATE_FIELDS}
     result["motion_latent"] = bank.at(motion_idx, phase).copy()
+    result["motion_idx"] = np.asarray(motion_idx, dtype=np.int64)
     return result
 
 
@@ -223,6 +224,9 @@ def main() -> None:
                     if can_branch:
                         origin = adapter.snapshot(reference_phase=phase)
                         prefix = learner.conditioned_history_numpy()
+                        prefix["motion_idx"] = np.full(
+                            args.n_obs_steps, motion_idx, dtype=np.int64
+                        )
                         learner_actions = np.stack(tuple(action_history))
                         fork = adapter.fork(origin, motion_idx)
                         teacher_states = []

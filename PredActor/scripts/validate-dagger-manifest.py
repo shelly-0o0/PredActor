@@ -21,6 +21,7 @@ REQUIRED_STATE_FIELDS = {
     "act", "body_pos", "body_rot", "body_lin_vel", "body_ang_vel",
     "joint_pos", "joint_vel", "root_pos", "root_rot", "projected_gravity",
     "base_lin_vel", "base_ang_vel", "last_actions", "motion_latent",
+    "motion_idx",
 }
 
 
