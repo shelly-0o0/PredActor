@@ -27,6 +27,10 @@ def main() -> None:
     parser.add_argument("--d0-zarr", required=True)
     parser.add_argument("--normalizer-checkpoint", required=True)
     parser.add_argument("--expected-motion-count", type=int, default=152)
+    parser.add_argument(
+        "--expected-motion-ids", default="",
+        help="Comma-separated audited subset for a canary; formal rounds leave this empty",
+    )
     parser.add_argument("--expected-origins-per-motion", type=int, required=True)
     parser.add_argument("--horizon", type=int, default=20)
     parser.add_argument("--n-obs-steps", type=int, default=4)
@@ -44,7 +48,13 @@ def main() -> None:
             raise FileExistsError(f"refusing to overwrite finalized artifact: {path}")
 
     paths = sorted(branches.glob("branch_*.npz"))
-    expected_total = args.expected_motion_count * args.expected_origins_per_motion
+    expected_ids = (
+        {int(value) for value in args.expected_motion_ids.split(",")}
+        if args.expected_motion_ids else set(range(args.expected_motion_count))
+    )
+    if not expected_ids or min(expected_ids) < 0 or max(expected_ids) >= args.expected_motion_count:
+        raise ValueError("invalid --expected-motion-ids")
+    expected_total = len(expected_ids) * args.expected_origins_per_motion
     if len(paths) != expected_total:
         raise ValueError(f"expected {expected_total} branches, got {len(paths)}")
     counts: Counter[int] = Counter()
@@ -60,8 +70,8 @@ def main() -> None:
         motion_idx = int(metadata.get("motion_idx", -1))
         if branch.role != "origin" or branch.command_id != motion_idx:
             raise ValueError(f"{path}: role/task identity mismatch")
-        if not 0 <= motion_idx < args.expected_motion_count:
-            raise ValueError(f"{path}: motion_idx out of range")
+        if motion_idx not in expected_ids:
+            raise ValueError(f"{path}: unexpected motion_idx {motion_idx}")
         phases = [int(value) for value in metadata.get("teacher_phases", [])]
         expected_steps = args.horizon - args.n_obs_steps + 1
         if len(phases) != expected_steps or phases != list(range(phases[0], phases[0] + expected_steps)):
@@ -93,7 +103,6 @@ def main() -> None:
         maximum_restore = max(maximum_restore, restore)
         results.append({"file": str(path), "motion_idx": motion_idx, "phase": phases[0]})
 
-    expected_ids = set(range(args.expected_motion_count))
     if set(counts) != expected_ids or any(
         counts[index] != args.expected_origins_per_motion for index in expected_ids
     ):
