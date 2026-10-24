@@ -62,7 +62,10 @@ def build_phase_condition_bank(
         start, end = slices[0]
         latent = np.asarray(data["motion_latent"][start:end], dtype=np.float32)
         reference_length = int(np.load(path, allow_pickle=False)["joint_pos"].shape[0])
-        if len(latent) != reference_length:
+        # The source collector stores transitions and intentionally omits the
+        # terminal reference state, so a dyed episode is normally L-1 frames
+        # for an L-frame motion.  Accept L as well for legacy complete episodes.
+        if len(latent) not in {reference_length - 1, reference_length}:
             raise ValueError(
                 f"motion {motion_idx}: D0 length {len(latent)} != reference {reference_length}"
             )
@@ -84,6 +87,7 @@ def build_phase_condition_bank(
             "motion_path": str(path),
             "motion_sha256": _sha256(path),
             "frames": len(latent),
+            "reference_frames": reference_length,
             "d0_episodes": len(slices),
         })
     payload["metadata_json"] = np.asarray(json.dumps({
