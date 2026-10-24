@@ -90,9 +90,10 @@ class IsaacLabVectorForkAdapter:
         self.live_env_id = int(live_env_id)
         self.termination_fn = termination_fn or (lambda env_id: False)
         self.restore_atol = float(restore_atol)
-        ids = [self.live_env_id, *self.shadow_by_command.values()]
-        if len(ids) != len(set(ids)):
+        shadow_ids = set(self.shadow_by_command.values())
+        if self.live_env_id in shadow_ids:
             raise ValueError("live and shadow environment IDs must be distinct")
+        ids = [self.live_env_id, *sorted(shadow_ids)]
         self.robot = env.scene["robot"]
         self.device = self.robot.data.joint_pos.device
         self.num_envs = int(self.robot.data.joint_pos.shape[0])
