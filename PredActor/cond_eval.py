@@ -262,6 +262,14 @@ def _apply_runtime_overrides(cfg, runner_cfg, device=None, headless=None, fk_dev
               default='agent', show_default=True, help='Checkpoint weights used for inference.')
 @click.option('--text-command', default=None,
               help='Use one fixed CLIP text command and disable stdin text updates.')
+@click.option(
+    '--text-embedding-archive', default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help=(
+        'Diagnostic override: look up --text-command in an NPZ commands/embeddings '
+        'archive instead of encoding it with CLIP.'
+    ),
+)
 @click.option('--max-steps', type=click.IntRange(1), default=None,
               help='Override the configured number of control steps.')
 @click.option('--seed', type=int, default=42, show_default=True,
@@ -310,7 +318,8 @@ def _apply_runtime_overrides(cfg, runner_cfg, device=None, headless=None, fk_dev
 @click.option('--camera-lookat-offset', type=(float, float, float), default=None,
               help='Camera look-at offset X Y Z relative to the followed body.')
 def main(checkpoint, config, output_dir, device, fk_device, checkpoint_replica,
-         text_command, max_steps, seed, trajectory_rollout, rollout_seconds,
+         text_command, text_embedding_archive, max_steps, seed,
+         trajectory_rollout, rollout_seconds,
          paper_terminal_gates, headless, precision, web_ui, web_host, web_port,
          web_no_browser, web_joystick_device, web_joystick_type, web_perturb,
          web_perturb_max_force, web_perturb_max_torque, camera_follow, camera_follow_body,
@@ -412,6 +421,8 @@ def main(checkpoint, config, output_dir, device, fk_device, checkpoint_replica,
             raise click.UsageError(
                 '--max-steps conflicts with the duration implied by --rollout-seconds')
         runner_cfg.max_steps = rollout_steps
+    if text_embedding_archive is not None and text_command is None:
+        raise click.UsageError('--text-embedding-archive requires --text-command')
     print(f"\nUsing runner configuration: {runner}")
     print(OmegaConf.to_yaml(runner_cfg))
 
@@ -454,11 +465,24 @@ def main(checkpoint, config, output_dir, device, fk_device, checkpoint_replica,
         if web_ui:
             web_interp_terms = _web_interpolation_terms(providers_cfg)
         active_providers = []
+        fixed_embedding_installed = False
         for name, pcfg in providers_cfg.items():
             if not pcfg.get('enabled', False):
                 continue
             pcfg = {k: v for k, v in pcfg.items() if k != 'enabled'}
             target = str(pcfg.get('_target_', ''))
+            if text_embedding_archive is not None and target.endswith('.CLIPTeleop'):
+                if fixed_embedding_installed:
+                    raise click.UsageError(
+                        '--text-embedding-archive found more than one enabled CLIPTeleop')
+                from diffusion_policy.task_provider import FixedEmbeddingProvider
+                instance = FixedEmbeddingProvider(text_embedding_archive, text_command)
+                active_providers.append(instance)
+                fixed_embedding_installed = True
+                print(
+                    '  Using fixed task-condition embedding: '
+                    f'{text_command!r} from {text_embedding_archive}')
+                continue
             if text_command is not None and target.endswith('.CLIPTeleop'):
                 pcfg['default_text'] = text_command
                 pcfg['interactive_input'] = False
@@ -483,6 +507,9 @@ def main(checkpoint, config, output_dir, device, fk_device, checkpoint_replica,
             task_cond_provider = active_providers[0]
         elif len(active_providers) > 1:
             task_cond_provider = CompositeCondProvider(active_providers)
+        if text_embedding_archive is not None and not fixed_embedding_installed:
+            raise click.UsageError(
+                '--text-embedding-archive requires an enabled CLIPTeleop provider slot')
         if web_ui:
             _configure_web_interpolation(task_cond_provider, web_interp_terms)
         runner_cfg = OmegaConf.masked_copy(

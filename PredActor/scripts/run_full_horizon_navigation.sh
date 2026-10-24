@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 5 ]]; then
-  echo "Usage: $0 CHECKPOINT CONFIG OUTPUT_DIR DEVICE CHECKPOINT_REPLICA" >&2
+if [[ $# -lt 5 || $# -gt 6 ]]; then
+  echo "Usage: $0 CHECKPOINT CONFIG OUTPUT_DIR DEVICE CHECKPOINT_REPLICA [TEXT_EMBEDDING_ARCHIVE]" >&2
   exit 2
 fi
 
@@ -11,6 +11,7 @@ config_path="$2"
 output_dir="$3"
 device_name="$4"
 checkpoint_replica="$5"
+text_embedding_archive="${6:-}"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 predactor_dir="$(cd "$script_dir/.." && pwd)"
@@ -23,6 +24,11 @@ run_case() {
   local prompt="$2"
   local trajectory="$output_dir/${case_id}-seed42.npz"
   local runtime_dir="$output_dir/runtime/${case_id}"
+  local embedding_args=()
+
+  if [[ -n "$text_embedding_archive" ]]; then
+    embedding_args+=(--text-embedding-archive "$text_embedding_archive")
+  fi
 
   if [[ -f "$trajectory" ]]; then
     echo "[resume] keep $trajectory"
@@ -40,6 +46,7 @@ run_case() {
     --trajectory-rollout "$trajectory" \
     --rollout-seconds 10 \
     --no-paper-terminal-gates \
+    "${embedding_args[@]}" \
     --headless \
     --no-web-ui
 }

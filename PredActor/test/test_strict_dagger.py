@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 import numpy as np
+import torch
 
 from dagger.branching import BranchWindow
 from dagger.command_map import MotionCommandMap, validate_command_geometry
@@ -20,9 +21,26 @@ from dagger.policy_benchmark import (
     rollout_survival,
 )
 from dagger.text_commands import command_id_for_text
+from diffusion_policy.task_provider.fixed_embedding import FixedEmbeddingProvider
 
 
 class StrictDaggerTests(unittest.TestCase):
+    def test_fixed_embedding_provider_uses_named_archive_row(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "prototypes.npz"
+            np.savez_compressed(
+                path,
+                commands=np.asarray(["walk straight", "turn left while walking"]),
+                embeddings=np.asarray([[3.0, 4.0], [0.0, 2.0]], dtype=np.float32),
+            )
+            provider = FixedEmbeddingProvider(str(path), "walk straight")
+            terms = {"root_pos": torch.zeros(2, 1, 3)}
+            provider.inject_raw_keys(terms, batch_size=2)
+            self.assertEqual(tuple(terms["motion_latent"].shape), (2, 1, 2))
+            np.testing.assert_allclose(
+                terms["motion_latent"][0, 0].numpy(), [0.6, 0.8], atol=1e-6
+            )
+
     def test_bare_walk_keeps_its_exact_text_embedding_id(self):
         self.assertEqual(command_id_for_text("walk"), 0)
         self.assertEqual(command_id_for_text("walking"), 1)

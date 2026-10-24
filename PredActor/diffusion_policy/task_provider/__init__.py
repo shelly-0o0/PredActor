@@ -28,6 +28,7 @@ _LAZY_PROVIDERS = {
     "G1RLObsStandardGuideProvider": (
         ".rlobs_standard_guide", "G1RLObsStandardGuideProvider"),
     "JoyTextWBG": (".whole_body_guidance.joy_text_wbg", "JoyTextWBG"),
+    "FixedEmbeddingProvider": (".fixed_embedding", "FixedEmbeddingProvider"),
 }
 
 
@@ -48,4 +49,5 @@ __all__ = [
     "MoRefTeleop",
     "G1RLObsStandardGuideProvider",
     "JoyTextWBG",
+    "FixedEmbeddingProvider",
 ]

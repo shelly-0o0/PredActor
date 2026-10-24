@@ -23,6 +23,10 @@ def main() -> None:
     parser.add_argument("--suite", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--motionclip-checkpoint")
+    parser.add_argument(
+        "--text-embedding-archive",
+        help="Diagnostic override passed to cond_eval instead of live CLIP text encoding.",
+    )
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--checkpoint-replica", choices=("agent", "ema_agent"), default="agent")
     parser.add_argument("--precision", choices=("fp32", "fp16"))
@@ -59,6 +63,11 @@ def main() -> None:
             ]
             if args.precision:
                 command.extend(("--precision", args.precision))
+            if args.text_embedding_archive:
+                command.extend((
+                    "--text-embedding-archive",
+                    str(Path(args.text_embedding_archive).expanduser().resolve()),
+                ))
             commands.append(command)
 
     for index, command in enumerate(commands, start=1):
