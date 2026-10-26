@@ -220,7 +220,11 @@ def main() -> None:
                     action = learner.act_conditioned()
                     batch = torch.as_tensor(action, dtype=torch.float32,
                                             device=unwrapped.device).reshape(1, -1)
-                    env.step(batch)
+                    # Step the manager environment directly.  The outer
+                    # Gymnasium OrderEnforcing wrapper is intentionally not
+                    # used because state initialization is explicit rather
+                    # than performed through its reset() API.
+                    unwrapped.step(batch)
                     learner_commits += 1
                     action_history.append(action.copy())
                     state = {key: np.asarray(value[0].detach().cpu()).copy()
