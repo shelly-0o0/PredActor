@@ -35,6 +35,8 @@ def main() -> None:
     parser.add_argument("--horizon", type=int, default=20)
     parser.add_argument("--n-obs-steps", type=int, default=4)
     parser.add_argument("--max-live-restore-error", type=float, default=1.0e-5)
+    parser.add_argument("--min-d1-windows", type=int, default=0)
+    parser.add_argument("--min-d1-fraction", type=float, default=0.0)
     args = parser.parse_args()
 
     branches = Path(args.branches).expanduser().resolve()
@@ -57,6 +59,33 @@ def main() -> None:
     expected_total = len(expected_ids) * args.expected_origins_per_motion
     if len(paths) != expected_total:
         raise ValueError(f"expected {expected_total} branches, got {len(paths)}")
+    if args.min_d1_windows < 0:
+        raise ValueError("--min-d1-windows must be non-negative")
+    if not 0.0 <= args.min_d1_fraction < 1.0:
+        raise ValueError("--min-d1-fraction must be in [0, 1)")
+
+    d0 = Path(args.d0_zarr).expanduser().resolve()
+    normalizer = Path(args.normalizer_checkpoint).expanduser().resolve()
+    if not d0.exists() or not normalizer.is_file():
+        raise FileNotFoundError("D0 or normalizer checkpoint is missing")
+    d0_buffer = ReplayBuffer.create_from_path(str(d0), mode="r")
+    d0_ends = np.asarray(d0_buffer.episode_ends[:], dtype=np.int64)
+    d0_starts = np.r_[0, d0_ends[:-1]]
+    d0_windows = int(np.maximum(0, d0_ends - d0_starts - args.horizon + 1).sum())
+    # D0 uses one padded start and end position, matching the normal BC config.
+    d0_windows += 2 * int(len(d0_ends))
+    d1_windows = len(paths)
+    total_windows = d0_windows + d1_windows
+    d1_fraction = d1_windows / total_windows
+    if d1_windows < args.min_d1_windows:
+        raise ValueError(
+            f"D1 launch gate failed: {d1_windows} windows < {args.min_d1_windows}"
+        )
+    if d1_fraction < args.min_d1_fraction:
+        raise ValueError(
+            f"D1 launch gate failed: fraction {d1_fraction:.6%} "
+            f"< {args.min_d1_fraction:.6%}"
+        )
     counts: Counter[int] = Counter()
     checkpoint = None
     maximum_restore = 0.0
@@ -136,23 +165,16 @@ def main() -> None:
         "windows": len(paths),
         "motions": len(counts),
         "origins_per_motion": args.expected_origins_per_motion,
+        "d0_windows": d0_windows,
+        "d1_windows": d1_windows,
+        "d1_fraction": d1_fraction,
+        "minimum_d1_windows": args.min_d1_windows,
+        "minimum_d1_fraction": args.min_d1_fraction,
         "learner_checkpoint": checkpoint,
         "maximum_live_restore_abs": maximum_restore,
         "results": results,
     }, indent=2) + "\n", encoding="utf-8")
 
-    d0 = Path(args.d0_zarr).expanduser().resolve()
-    normalizer = Path(args.normalizer_checkpoint).expanduser().resolve()
-    if not d0.exists() or not normalizer.is_file():
-        raise FileNotFoundError("D0 or normalizer checkpoint is missing")
-    d0_buffer = ReplayBuffer.create_from_path(str(d0), mode="r")
-    d0_ends = np.asarray(d0_buffer.episode_ends[:], dtype=np.int64)
-    d0_starts = np.r_[0, d0_ends[:-1]]
-    d0_windows = int(np.maximum(0, d0_ends - d0_starts - args.horizon + 1).sum())
-    # D0 uses one padded start and end position, matching the normal BC config.
-    d0_windows += 2 * int(len(d0_ends))
-    d1_windows = len(paths)
-    total_windows = d0_windows + d1_windows
     d0_weight = d0_windows / total_windows
     d1_weight = d1_windows / total_windows
     manifest_path.write_text("\n".join([
