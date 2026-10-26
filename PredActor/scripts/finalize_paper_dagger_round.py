@@ -67,6 +67,8 @@ def main() -> None:
         metadata = branch_metadata(path)
         if metadata.get("schema") != "predactor-paper-dagger-branch-v1":
             raise ValueError(f"{path}: invalid paper DAgger schema")
+        if metadata.get("collection_schema") != "process-isolated-v2":
+            raise ValueError(f"{path}: teacher branch was not process-isolated")
         motion_idx = int(metadata.get("motion_idx", -1))
         if branch.role != "origin" or branch.command_id != motion_idx:
             raise ValueError(f"{path}: role/task identity mismatch")

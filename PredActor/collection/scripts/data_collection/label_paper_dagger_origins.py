@@ -253,6 +253,7 @@ def main() -> None:
                 "live_teacher_commits": 0,
                 "live_learner_commits": int(origin.metadata.get("learner_commits", 0)),
                 "live_restore_max_abs": restore_error,
+                "learner_checkpoint": str(origin.metadata.get("learner_checkpoint", "")),
                 "teacher_checkpoint": str(Path(args.teacher_checkpoint).resolve()),
             })
             accepted[motion_idx] += 1
