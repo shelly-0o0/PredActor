@@ -10,6 +10,12 @@ from typing import Mapping
 import numpy as np
 
 
+def is_origin_step(local_step: int, n_obs_steps: int, branch_every: int) -> bool:
+    """Schedule the first origin as soon as its learner history is complete."""
+    first = int(n_obs_steps) - 1
+    return int(local_step) >= first and (int(local_step) - first) % int(branch_every) == 0
+
+
 @dataclass(frozen=True)
 class PaperDaggerOrigin:
     student_prefix: Mapping[str, np.ndarray]

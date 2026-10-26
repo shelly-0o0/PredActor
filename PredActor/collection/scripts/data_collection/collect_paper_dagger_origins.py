@@ -26,7 +26,7 @@ PREDACTOR_DIR = SCRIPT_DIR.parents[2]
 if str(PREDACTOR_DIR) not in sys.path:
     sys.path.insert(0, str(PREDACTOR_DIR))
 
-from dagger.paper_origins import PaperDaggerOrigin, save_origin
+from dagger.paper_origins import PaperDaggerOrigin, is_origin_step, save_origin
 from dagger.phase_conditions import PhaseConditionBank
 from dagger.policy_runtime import ExactTextPolicyRuntime
 
@@ -50,7 +50,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--motion-ids", default="")
     parser.add_argument("--branch-every", type=int, default=12)
     parser.add_argument("--max-episode-steps", type=int, default=240)
-    parser.add_argument("--max-attempts-per-motion", type=int, default=12)
+    parser.add_argument("--max-attempts-per-motion", type=int, default=24)
     parser.add_argument("--horizon", type=int, default=20)
     parser.add_argument("--n-obs-steps", type=int, default=4)
     parser.add_argument("--seed", type=int, default=42)
@@ -175,7 +175,9 @@ def main() -> None:
                     phase = int(motion_term.time_steps[0].item())
                     can_save = (
                         len(action_history) == args.n_obs_steps - 1
-                        and local_step % args.branch_every == 0
+                        and is_origin_step(
+                            local_step, args.n_obs_steps, args.branch_every
+                        )
                         and phase + teacher_steps <= bank.length(motion_idx)
                     )
                     if can_save:

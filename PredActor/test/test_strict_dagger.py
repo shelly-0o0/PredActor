@@ -22,7 +22,12 @@ from dagger.policy_benchmark import (
     first_complete_motion_window,
     rollout_survival,
 )
-from dagger.paper_origins import PaperDaggerOrigin, load_origin, save_origin
+from dagger.paper_origins import (
+    PaperDaggerOrigin,
+    is_origin_step,
+    load_origin,
+    save_origin,
+)
 from dagger.text_commands import command_id_for_text
 from dagger.same_origin import audit_same_origin_group
 from dagger.isaaclab_adapter import IsaacLabVectorForkAdapter, state_max_abs
@@ -30,6 +35,10 @@ from diffusion_policy.task_provider.fixed_embedding import FixedEmbeddingProvide
 
 
 class StrictDaggerTests(unittest.TestCase):
+    def test_origin_schedule_starts_when_history_is_complete(self):
+        selected = [step for step in range(30) if is_origin_step(step, 4, 12)]
+        self.assertEqual(selected, [3, 15, 27])
+
     def test_process_isolated_origin_round_trip(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "origin.npz"
