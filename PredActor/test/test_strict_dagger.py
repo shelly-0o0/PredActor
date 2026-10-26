@@ -22,6 +22,7 @@ from dagger.policy_benchmark import (
     first_complete_motion_window,
     rollout_survival,
 )
+from dagger.paper_origins import PaperDaggerOrigin, load_origin, save_origin
 from dagger.text_commands import command_id_for_text
 from dagger.same_origin import audit_same_origin_group
 from dagger.isaaclab_adapter import IsaacLabVectorForkAdapter, state_max_abs
@@ -29,6 +30,32 @@ from diffusion_policy.task_provider.fixed_embedding import FixedEmbeddingProvide
 
 
 class StrictDaggerTests(unittest.TestCase):
+    def test_process_isolated_origin_round_trip(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "origin.npz"
+            origin = PaperDaggerOrigin(
+                student_prefix={
+                    "root_pos": np.arange(12, dtype=np.float32).reshape(4, 3),
+                    "motion_latent": np.ones((4, 512), dtype=np.float32),
+                },
+                student_actions=np.zeros((3, 29), dtype=np.float32),
+                root_state_w=np.arange(13, dtype=np.float32),
+                joint_pos=np.zeros(29, dtype=np.float32),
+                joint_vel=np.ones(29, dtype=np.float32),
+                interval_event_timers=np.asarray([4.25], dtype=np.float32),
+                motion_idx=7, reference_phase=36,
+                metadata={"schema": "predactor-paper-dagger-origin-v1"},
+            )
+            save_origin(path, origin)
+            loaded = load_origin(path)
+            self.assertEqual(loaded.motion_idx, 7)
+            self.assertEqual(loaded.reference_phase, 36)
+            np.testing.assert_array_equal(loaded.root_state_w, origin.root_state_w)
+            np.testing.assert_array_equal(
+                loaded.student_prefix["motion_latent"],
+                origin.student_prefix["motion_latent"],
+            )
+
     def test_teacher_transaction_freezes_live_interval_event_timer(self):
         class EventManager:
             _interval_term_time_left = [torch.tensor([0.25, 0.75])]

@@ -5,6 +5,7 @@ REPO_ROOT="${PREDACTOR_REPO_ROOT:-/root/Predactor/PredActor-DAgger}"
 DATA_ROOT="${PREDACTOR_DATA_ROOT:-/data/PredActor}"
 ROUND_ROOT="${PREDACTOR_ROUND_ROOT:-$DATA_ROOT/dagger_strict/paper_round_01}"
 ORIGINS_PER_MOTION="${PREDACTOR_ORIGINS_PER_MOTION:-5}"
+CANDIDATES_PER_MOTION="${PREDACTOR_CANDIDATES_PER_MOTION:-8}"
 COLLECTION_PYTHON="${PREDACTOR_COLLECTION_PYTHON:-/root/miniconda3/envs/predactor-collection/bin/python}"
 TRAIN_PYTHON="${PREDACTOR_TRAIN_PYTHON:-/root/Predactor/PredActor/.venv/bin/python}"
 PI0="${PREDACTOR_LEARNER_CHECKPOINT:-$DATA_ROOT/outputs/October-23-14-13-57-g1prdp_cond_diffuse-pi0-d0-seed42-final/checkpoints/latest.ckpt}"
@@ -13,6 +14,7 @@ MOTIONS="$DATA_ROOT/Artifacts/motions/g1_152fk"
 D0="$DATA_ROOT/Artifacts/dataset/g1_152fk/motion_dyed_text_t0.01.zarr"
 CONDITIONS="$DATA_ROOT/Artifacts/dagger/d0_phase_conditions_v1.npz"
 BRANCHES="$ROUND_ROOT/branches"
+ORIGINS="$ROUND_ROOT/origins"
 MANIFEST="$ROUND_ROOT/manifest.yaml"
 
 cd "$REPO_ROOT"
@@ -35,8 +37,32 @@ export PREDACTOR_ROOT="$REPO_ROOT/PredActor"
 export PREDACTOR_ASSET_ROOT="$REPO_ROOT/PredActor/assets"
 
 "$COLLECTION_PYTHON" \
-  PredActor/collection/scripts/data_collection/collect_strict_dagger_round.py \
+  PredActor/collection/scripts/data_collection/collect_paper_dagger_origins.py \
   --learner-checkpoint "$PI0" \
+  --motion-root "$MOTIONS" \
+  --phase-conditions "$CONDITIONS" \
+  --output "$ORIGINS" \
+  --candidates-per-motion "$CANDIDATES_PER_MOTION" \
+  --seed 42 --headless
+
+ORIGIN_RECEIPT="$ORIGINS/origin_receipt.json"
+test -f "$ORIGIN_RECEIPT" || {
+  echo "origin collection did not produce a completion receipt: $ORIGIN_RECEIPT" >&2
+  exit 3
+}
+EXPECTED_ORIGINS=$((152 * CANDIDATES_PER_MOTION))
+ACTUAL_ORIGINS=$(find "$ORIGINS" -maxdepth 1 -type f -name 'origin_*.npz' | wc -l)
+if test "$ACTUAL_ORIGINS" -ne "$EXPECTED_ORIGINS"; then
+  echo "origin collection incomplete: expected $EXPECTED_ORIGINS, got $ACTUAL_ORIGINS" >&2
+  exit 3
+fi
+
+# The teacher runs in a fresh IsaacLab process.  It never steps or restores the
+# live learner simulator, so vector-wide physics/events/resets cannot corrupt
+# learner visitation.  Extra candidates absorb rejected teacher continuations.
+"$COLLECTION_PYTHON" \
+  PredActor/collection/scripts/data_collection/label_paper_dagger_origins.py \
+  --origins "$ORIGINS" \
   --teacher-checkpoint "$TEACHER" \
   --motion-root "$MOTIONS" \
   --phase-conditions "$CONDITIONS" \
@@ -44,9 +70,8 @@ export PREDACTOR_ASSET_ROOT="$REPO_ROOT/PredActor/assets"
   --origins-per-motion "$ORIGINS_PER_MOTION" \
   --seed 42 --headless
 
-# Isaac Sim may terminate the Python process unusually after an exception.
-# Require a complete receipt and exact branch count before finalization so a
-# partial collection can never be mistaken for a finished DAgger round.
+# Isaac Sim may terminate unusually after an exception.  Require a complete
+# receipt and exact branch count before finalization.
 RECEIPT="$BRANCHES/collection_receipt.json"
 test -f "$RECEIPT" || {
   echo "collection did not produce a completion receipt: $RECEIPT" >&2
