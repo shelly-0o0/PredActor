@@ -123,6 +123,7 @@ class IsaacLabVectorForkAdapter:
         self._owners = self._discover_tensor_owners()
         self.live_learner_commits = 0
         self.live_teacher_commits = 0
+        self.live_auto_resets_prevented = 0
         self.max_restore_error = 0.0
 
     def _interval_event_timers(self) -> tuple[torch.Tensor, ...]:
@@ -167,6 +168,31 @@ class IsaacLabVectorForkAdapter:
                 raise TypeError("IsaacLab interval-event timer must be floating point")
             timer[self.live_env_id] = torch.inf
         return saved
+
+    def _suspend_live_auto_reset(self):
+        """Prevent a teacher-only global step from resetting the live lane.
+
+        IsaacLab advances all vector lanes in one ``env.step`` and immediately
+        resets any lane whose termination manager fires.  A live lane close to
+        a failure boundary can therefore be reset while only the shadow teacher
+        is supposed to advance.  Returning ``False`` for the protected row
+        blocks that reset; the termination-manager row is restored from the
+        origin snapshot after the transaction.
+        """
+        manager = getattr(self.env, "termination_manager", None)
+        original = getattr(manager, "compute", None)
+        if original is None:
+            raise RuntimeError("environment has no termination-manager compute method")
+
+        def compute_without_live_reset(*args, **kwargs):
+            reset = original(*args, **kwargs)
+            if bool(reset[self.live_env_id].item()):
+                self.live_auto_resets_prevented += 1
+            reset[self.live_env_id] = False
+            return reset
+
+        manager.compute = compute_without_live_reset
+        return manager, original
 
     def _discover_tensor_owners(self) -> dict[str, Any]:
         owners: dict[str, Any] = {"env": self.env}
@@ -281,9 +307,11 @@ class IsaacLabVectorForkAdapter:
         # this guard, push_robot can alter cached live body velocities even
         # though root/joint state is subsequently restored.
         live_event_rows = self._suspend_live_interval_events()
+        termination_manager, original_termination_compute = self._suspend_live_auto_reset()
         try:
             self.env.step(self._action_batch(fork.env_id, action))
         finally:
+            termination_manager.compute = original_termination_compute
             self._restore_interval_event_rows(live_event_rows, self.live_env_id)
         shadow_state = _copy_state(self.observe_fn(), fork.env_id)
         fork._terminated = bool(self.termination_fn(fork.env_id))

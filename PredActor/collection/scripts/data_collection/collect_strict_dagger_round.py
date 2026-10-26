@@ -273,6 +273,7 @@ def main() -> None:
                                 "teacher_phases": teacher_phases,
                                 "live_teacher_commits": 0,
                                 "live_learner_commits": adapter.live_learner_commits,
+                                "live_auto_resets_prevented": adapter.live_auto_resets_prevented,
                                 "live_restore_max_abs": max(restore_error, fork.max_restore_error),
                                 "learner_checkpoint": str(Path(args.learner_checkpoint).resolve()),
                             })
@@ -300,6 +301,7 @@ def main() -> None:
             "per_motion": per_motion,
             "live_learner_commits": adapter.live_learner_commits,
             "live_teacher_commits": adapter.live_teacher_commits,
+            "live_auto_resets_prevented": adapter.live_auto_resets_prevented,
             "maximum_live_restore_abs": adapter.max_restore_error,
             "teacher_terminated_rejections": rejected_terminated,
             "learner_checkpoint": str(Path(args.learner_checkpoint).resolve()),

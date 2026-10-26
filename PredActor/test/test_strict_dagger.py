@@ -46,6 +46,25 @@ class StrictDaggerTests(unittest.TestCase):
         adapter._restore_interval_event_rows(saved, adapter.live_env_id)
         self.assertEqual(adapter.env.event_manager._interval_term_time_left[0][0], 0.25)
 
+    def test_teacher_transaction_prevents_live_auto_reset(self):
+        class TerminationManager:
+            def compute(self):
+                return torch.tensor([True, True])
+
+        class Env:
+            termination_manager = TerminationManager()
+
+        adapter = IsaacLabVectorForkAdapter.__new__(IsaacLabVectorForkAdapter)
+        adapter.env = Env()
+        adapter.live_env_id = 0
+        adapter.live_auto_resets_prevented = 0
+        manager, original = adapter._suspend_live_auto_reset()
+        reset = manager.compute()
+        self.assertEqual(reset.tolist(), [False, True])
+        self.assertEqual(adapter.live_auto_resets_prevented, 1)
+        manager.compute = original
+        self.assertEqual(manager.compute().tolist(), [True, True])
+
     def test_isaaclab_state_comparison_is_fail_closed(self):
         left = {
             "root_pos": np.zeros(3, dtype=np.float32),
