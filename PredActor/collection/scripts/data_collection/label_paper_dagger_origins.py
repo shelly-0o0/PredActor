@@ -173,7 +173,6 @@ def main() -> None:
             for timer, value in zip(timers, origin.interval_event_timers):
                 timer[0] = float(value)
             unwrapped.episode_length_buf[0] = 0
-            unwrapped.reset_buf[0] = False
             unwrapped.scene.write_data_to_sim()
             unwrapped.sim.forward()
             for name in ("_body_state_w", "_body_link_state_w"):

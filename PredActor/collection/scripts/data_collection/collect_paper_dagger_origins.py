@@ -148,7 +148,6 @@ def main() -> None:
             motion_term._apply_initialization_randomization(ids)
             unwrapped.action_manager.reset(ids)
             unwrapped.episode_length_buf[0] = 0
-            unwrapped.reset_buf[0] = False
             unwrapped.scene.write_data_to_sim()
             unwrapped.sim.forward()
             return {key: np.asarray(value[0].detach().cpu()).copy()
