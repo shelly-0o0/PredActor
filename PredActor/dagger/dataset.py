@@ -61,6 +61,8 @@ class StrictDaggerDataset(OfflineDataset):
         load_to_memory: bool = False,
         symm_aug: bool = False,
         epoch_size: int | None = None,
+        sampling_mode: str = "weighted",
+        use_action_valid_mask: bool = True,
         text_replacement_probability: float = 0.35,
         **kwargs,
     ):
@@ -78,6 +80,10 @@ class StrictDaggerDataset(OfflineDataset):
                 "mirrored samples with swapped command_id in a counterfactual shard."
             )
         self.seed = int(seed)
+        if sampling_mode not in {"weighted", "aggregate"}:
+            raise ValueError("sampling_mode must be 'weighted' or 'aggregate'")
+        self.sampling_mode = sampling_mode
+        self.use_action_valid_mask = bool(use_action_valid_mask)
         probability = float(text_replacement_probability)
         if not 0.0 <= probability <= 1.0:
             raise ValueError("text_replacement_probability must be in [0, 1]")
@@ -131,10 +137,16 @@ class StrictDaggerDataset(OfflineDataset):
             )
         self._base_keys = set(MODEL_RAW_KEYS)
 
-        total = int(epoch_size) if epoch_size is not None else sum(map(len, self.datasets))
-        self.source_counts = _weighted_counts(
-            [source.weight for source in self.manifest.sources], total
-        )
+        if self.sampling_mode == "aggregate":
+            if epoch_size is not None:
+                raise ValueError("aggregate sampling uses each available window once")
+            self.source_counts = [len(dataset) for dataset in self.datasets]
+            total = sum(self.source_counts)
+        else:
+            total = int(epoch_size) if epoch_size is not None else sum(map(len, self.datasets))
+            self.source_counts = _weighted_counts(
+                [source.weight for source in self.manifest.sources], total
+            )
         self._ends = np.cumsum(self.source_counts)
 
         self._text_embeddings = None
@@ -149,9 +161,9 @@ class StrictDaggerDataset(OfflineDataset):
             self._text_embeddings = torch.from_numpy(embeddings)
 
         print(
-            "[StrictDaggerDataset] "
+            f"[StrictDaggerDataset] sampling_mode={self.sampling_mode}; "
             + ", ".join(
-                f"{source.name}:{count}/{total} ({source.weight:.1%}, {source.role})"
+                f"{source.name}:{count}/{total} ({count / total:.4%}, {source.role})"
                 for source, count in zip(self.manifest.sources, self.source_counts)
             )
         )
@@ -174,9 +186,7 @@ class StrictDaggerDataset(OfflineDataset):
         item = self.datasets[source_index][local_index]
         role = self.manifest.sources[source_index].role
         result = {key: value for key, value in item.items() if key in self._base_keys}
-        if role == "d0":
-            result["action_valid"] = torch.ones(self.horizon, dtype=torch.bool)
-        else:
+        if role != "d0" and self.use_action_valid_mask:
             if "action_valid" not in item:
                 raise KeyError(
                     f"strict DAgger source {self.manifest.sources[source_index].name!r} "

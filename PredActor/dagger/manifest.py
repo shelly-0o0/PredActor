@@ -34,6 +34,7 @@ class DaggerManifest:
     normalizer_checkpoint: Path
     normalizer_replica: str
     sources: tuple[DaggerSource, ...]
+    sampling_mode: str = "weighted"
     text_embeddings: Path | None = None
     text_commands: tuple[str, ...] = ()
 
@@ -44,6 +45,9 @@ class DaggerManifest:
             raw: dict[str, Any] = yaml.safe_load(stream) or {}
         if raw.get("schema") != "predactor-strict-dagger-v1":
             raise ValueError("manifest schema must be 'predactor-strict-dagger-v1'")
+        sampling_mode = str(raw.get("sampling_mode", "weighted"))
+        if sampling_mode not in {"weighted", "aggregate"}:
+            raise ValueError("sampling_mode must be 'weighted' or 'aggregate'")
 
         base = manifest_path.parent
         checkpoint = _resolve_path(raw.get("normalizer_checkpoint", ""), base)
@@ -82,12 +86,13 @@ class DaggerManifest:
             )
         d0_weight = sum(item.weight for item in sources if item.role == "d0")
         dagger_weight = sum(item.weight for item in sources if item.role in DAGGER_ROLES)
-        if not 0.50 <= d0_weight <= 0.70:
-            raise ValueError(f"D0 weight must be in [0.50, 0.70], got {d0_weight:.6f}")
-        if not 0.30 <= dagger_weight <= 0.50:
-            raise ValueError(
-                f"new DAgger-window weight must be in [0.30, 0.50], got {dagger_weight:.6f}"
-            )
+        if sampling_mode == "weighted":
+            if not 0.50 <= d0_weight <= 0.70:
+                raise ValueError(f"D0 weight must be in [0.50, 0.70], got {d0_weight:.6f}")
+            if not 0.30 <= dagger_weight <= 0.50:
+                raise ValueError(
+                    f"new DAgger-window weight must be in [0.30, 0.50], got {dagger_weight:.6f}"
+                )
         if abs(sum(item.weight for item in sources) - 1.0) > 1.0e-6:
             raise ValueError("source weights must sum to 1.0")
 
@@ -119,9 +124,11 @@ class DaggerManifest:
                 receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
                 if receipt.get("schema") != "predactor-strict-dagger-shard-v1":
                     raise ValueError(f"{receipt_path}: invalid strict-shard schema")
-                if receipt.get("learner_actions_used_as_targets") is not False:
+                expected_learner_targets = sampling_mode == "aggregate"
+                if receipt.get("learner_actions_used_as_targets") is not expected_learner_targets:
                     raise ValueError(
-                        f"{receipt_path}: learner actions must never be training targets"
+                        f"{receipt_path}: learner-prefix target convention does not "
+                        f"match sampling_mode={sampling_mode!r}"
                     )
                 recorded_output = Path(str(receipt.get("output", ""))).resolve()
                 if recorded_output != source.path.resolve():
@@ -140,6 +147,7 @@ class DaggerManifest:
             normalizer_checkpoint=checkpoint,
             normalizer_replica=replica,
             sources=tuple(sources),
+            sampling_mode=sampling_mode,
             text_embeddings=text_embeddings,
             text_commands=text_commands,
         )

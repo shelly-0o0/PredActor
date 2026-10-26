@@ -119,7 +119,12 @@ def main() -> None:
         "horizon": args.horizon,
         "n_obs_steps": args.n_obs_steps,
         "role_counts": {"origin": len(paths)},
-        "learner_actions_used_as_targets": False,
+        # Equation-2 replay keeps the observed learner-history prefix.  The
+        # action at the branch origin and every later action are teacher
+        # labels; the three pre-origin actions remain the actions that produced
+        # their corresponding observed states.  No DAgger-specific loss mask
+        # is introduced.
+        "learner_actions_used_as_targets": True,
         "motion_counts": {str(key): counts[key] for key in sorted(counts)},
     }
     output.with_suffix(".receipt.json").write_text(
@@ -140,18 +145,30 @@ def main() -> None:
     normalizer = Path(args.normalizer_checkpoint).expanduser().resolve()
     if not d0.exists() or not normalizer.is_file():
         raise FileNotFoundError("D0 or normalizer checkpoint is missing")
+    d0_buffer = ReplayBuffer.create_from_path(str(d0), mode="r")
+    d0_ends = np.asarray(d0_buffer.episode_ends[:], dtype=np.int64)
+    d0_starts = np.r_[0, d0_ends[:-1]]
+    d0_windows = int(np.maximum(0, d0_ends - d0_starts - args.horizon + 1).sum())
+    # D0 uses one padded start and end position, matching the normal BC config.
+    d0_windows += 2 * int(len(d0_ends))
+    d1_windows = len(paths)
+    total_windows = d0_windows + d1_windows
+    d0_weight = d0_windows / total_windows
+    d1_weight = d1_windows / total_windows
     manifest_path.write_text("\n".join([
         "schema: predactor-strict-dagger-v1",
+        "sampling_mode: aggregate",
         f"normalizer_checkpoint: {normalizer}",
         "normalizer_replica: ema_agent",
         "sources:",
-        f"  - {{name: d0, path: {d0}, role: d0, weight: 0.60}}",
-        f"  - {{name: d1_origins, path: {output}, role: origin, weight: 0.40}}",
+        f"  - {{name: d0, path: {d0}, role: d0, weight: {d0_weight:.12f}}}",
+        f"  - {{name: d1_origins, path: {output}, role: origin, weight: {d1_weight:.12f}}}",
         "",
     ]), encoding="utf-8")
     print(json.dumps({
         "manifest": str(manifest_path), "audit": str(audit_path),
-        "d1": str(output), "windows": len(paths), "status": "PASS",
+        "d1": str(output), "windows": len(paths),
+        "aggregate_windows": total_windows, "status": "PASS",
     }, indent=2))
 
 

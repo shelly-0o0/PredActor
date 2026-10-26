@@ -26,7 +26,7 @@ logging:
   name: paper-dagger
   project: diffuse_cloc
   resume: false
-  tags: [g1prdp, paper-dagger, 152-motion]
+  tags: [g1prdp, paper-dagger, aggregate-replay, 152-motion]
 
 policy:
   condition_dropout_config:
@@ -34,8 +34,10 @@ policy:
   actor:
     _target_: diffusion_policy.modules.diffuse_cprdp.DiffuseCPRDP
     enable_root_pos_guide: false
+    # Keep the same actor and reconstruction objective used by pi0.  DAgger
+    # changes replay data only; it does not introduce a DAgger-specific loss.
     whole_body_guidance_config:
-      enabled: false
+      enabled: true
     backbone:
       x_input_dim: 384
       x_output_dim: 384
@@ -50,7 +52,7 @@ policy:
     use_ns_ddim: true
     randomize_noise_schedule: true
     action_weight_schedule: constant-to-8
-    action_rate_target_mode: teacher_delta
+    action_rate_target_mode: clean_action_smooth
     action_rate_loss_scale: 0.1
 
 dataset:
@@ -60,10 +62,12 @@ dataset:
   n_task_steps: 4
   load_to_memory: false
   symm_aug: false
-  # D1 retains the same phase-conditioned MotionCLIP latent as D0. No command
-  # is substituted and no navigation-only exact-text remapping is performed.
   text_replacement_probability: 0.0
-  epoch_size: 100000
+  # Paper DAgger is dataset aggregation: every available D0 and D1 window is
+  # present once in replay.  Do not inflate a small D1 shard to a fixed ratio.
+  sampling_mode: aggregate
+  use_action_valid_mask: false
+  epoch_size: null
   dropout_config_train_overrides:
     text_cond:
       enabled: false
@@ -78,7 +82,7 @@ training:
   num_epochs: 1
   max_train_steps: null
   resume: false
-  use_ema: false
+  use_ema: true
   lr_scheduler: constant
   lr_warmup_steps: 0
   checkpoint_every: 1

@@ -3,7 +3,7 @@ set -euo pipefail
 
 REPO_ROOT="${PREDACTOR_REPO_ROOT:-/root/Predactor/PredActor-DAgger}"
 DATA_ROOT="${PREDACTOR_DATA_ROOT:-/data/PredActor}"
-ROUND_ROOT="${PREDACTOR_ROUND_ROOT:-$DATA_ROOT/dagger_strict/paper_round_01}"
+ROUND_ROOT="${PREDACTOR_ROUND_ROOT:-$DATA_ROOT/dagger/paper_round_01_minimal_v1}"
 ORIGINS_PER_MOTION="${PREDACTOR_ORIGINS_PER_MOTION:-5}"
 CANDIDATES_PER_MOTION="${PREDACTOR_CANDIDATES_PER_MOTION:-8}"
 COLLECTION_PYTHON="${PREDACTOR_COLLECTION_PYTHON:-/root/miniconda3/envs/predactor-collection/bin/python}"
@@ -90,14 +90,12 @@ fi
   --expected-motion-count 152 \
   --expected-origins-per-motion "$ORIGINS_PER_MOTION"
 
-"$TRAIN_PYTHON" PredActor/scripts/validate-dagger-manifest.py "$MANIFEST"
-
 export PREDACTOR_DAGGER_MANIFEST="$MANIFEST"
 export PREDACTOR_PI0_CHECKPOINT="$PI0"
 export PREDACTOR_OUTPUT_ROOT="$DATA_ROOT/outputs"
 "$TRAIN_PYTHON" PredActor/train.py \
   --cfg g1prdp_dagger_paper.yaml \
-  --exp_name paper-dagger-pi1-round01-s42 \
+  --exp_name paper-dagger-minimal-pi1-round01-s42 \
   --gpu 0
 
 echo "PAPER_DAGGER_ROUND1_COMPLETE round=$ROUND_ROOT"
