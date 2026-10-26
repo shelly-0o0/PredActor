@@ -85,6 +85,7 @@ class IsaacLabLaneSnapshot:
     joint_pos: torch.Tensor
     joint_vel: torch.Tensor
     manager_rows: dict[tuple[str, str], torch.Tensor]
+    interval_event_rows: tuple[torch.Tensor, ...]
     observable: dict[str, np.ndarray]
     reference_phase: int
 
@@ -124,6 +125,49 @@ class IsaacLabVectorForkAdapter:
         self.live_teacher_commits = 0
         self.max_restore_error = 0.0
 
+    def _interval_event_timers(self) -> tuple[torch.Tensor, ...]:
+        """Return per-environment interval timers owned by IsaacLab.
+
+        ``EventManager`` keeps these tensors inside a Python list, so the
+        generic manager-row discovery below cannot see them.  They are part of
+        the simulator state: allowing a teacher-only step to decrement the
+        live timer would make the learner receive pushes earlier than it would
+        on an independently advanced rollout.
+        """
+        manager = getattr(self.env, "event_manager", None)
+        timers = getattr(manager, "_interval_term_time_left", ())
+        result = []
+        for timer in timers:
+            if not torch.is_tensor(timer):
+                raise TypeError("IsaacLab interval-event timer must be a tensor")
+            if timer.ndim < 1 or int(timer.shape[0]) != self.num_envs:
+                raise RuntimeError(
+                    "global interval events cannot be isolated by vector lane"
+                )
+            result.append(timer)
+        return tuple(result)
+
+    def _copy_interval_event_rows(self, env_id: int) -> tuple[torch.Tensor, ...]:
+        return tuple(timer[env_id].detach().clone() for timer in self._interval_event_timers())
+
+    def _restore_interval_event_rows(
+        self, rows: tuple[torch.Tensor, ...], env_id: int,
+    ) -> None:
+        timers = self._interval_event_timers()
+        if len(rows) != len(timers):
+            raise RuntimeError("interval-event timer layout changed during transaction")
+        for timer, row in zip(timers, rows):
+            timer[env_id].copy_(row.to(device=timer.device, dtype=timer.dtype))
+
+    def _suspend_live_interval_events(self) -> tuple[torch.Tensor, ...]:
+        """Make interval events ineligible for the protected live lane."""
+        saved = self._copy_interval_event_rows(self.live_env_id)
+        for timer in self._interval_event_timers():
+            if not torch.is_floating_point(timer):
+                raise TypeError("IsaacLab interval-event timer must be floating point")
+            timer[self.live_env_id] = torch.inf
+        return saved
+
     def _discover_tensor_owners(self) -> dict[str, Any]:
         owners: dict[str, Any] = {"env": self.env}
         for name in ("action_manager", "termination_manager", "reward_manager"):
@@ -162,6 +206,7 @@ class IsaacLabVectorForkAdapter:
             joint_pos=self.robot.data.joint_pos[env_id].detach().clone(),
             joint_vel=self.robot.data.joint_vel[env_id].detach().clone(),
             manager_rows=self._manager_rows(env_id),
+            interval_event_rows=self._copy_interval_event_rows(env_id),
             observable=_copy_state(self.observe_fn(), env_id),
             reference_phase=int(reference_phase),
         )
@@ -186,6 +231,7 @@ class IsaacLabVectorForkAdapter:
             value = getattr(owner, name, None) if owner is not None else None
             if torch.is_tensor(value) and value.ndim >= 1 and value.shape[0] == self.num_envs:
                 value[target].copy_(row.to(device=value.device, dtype=value.dtype))
+        self._restore_interval_event_rows(snapshot.interval_event_rows, target)
         scene = getattr(self.env, "scene", None)
         if scene is not None and hasattr(scene, "write_data_to_sim"):
             scene.write_data_to_sim()
@@ -229,7 +275,16 @@ class IsaacLabVectorForkAdapter:
         self, fork: "IsaacLabShadowFork", action: np.ndarray | torch.Tensor,
     ) -> dict[str, np.ndarray]:
         self.restore(fork.origin)
-        self.env.step(self._action_batch(fork.env_id, action))
+        # ``env.step`` advances every vector lane and applies interval events
+        # after physics.  Keep the live lane ineligible while the isolated
+        # teacher lane advances, then put its timer back exactly.  Without
+        # this guard, push_robot can alter cached live body velocities even
+        # though root/joint state is subsequently restored.
+        live_event_rows = self._suspend_live_interval_events()
+        try:
+            self.env.step(self._action_batch(fork.env_id, action))
+        finally:
+            self._restore_interval_event_rows(live_event_rows, self.live_env_id)
         shadow_state = _copy_state(self.observe_fn(), fork.env_id)
         fork._terminated = bool(self.termination_fn(fork.env_id))
         # Roll back every live-row tensor and physical state before returning.

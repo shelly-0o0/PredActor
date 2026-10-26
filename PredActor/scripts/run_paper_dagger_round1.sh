@@ -44,6 +44,21 @@ export PREDACTOR_ASSET_ROOT="$REPO_ROOT/PredActor/assets"
   --origins-per-motion "$ORIGINS_PER_MOTION" \
   --seed 42 --headless
 
+# Isaac Sim may terminate the Python process unusually after an exception.
+# Require a complete receipt and exact branch count before finalization so a
+# partial collection can never be mistaken for a finished DAgger round.
+RECEIPT="$BRANCHES/collection_receipt.json"
+test -f "$RECEIPT" || {
+  echo "collection did not produce a completion receipt: $RECEIPT" >&2
+  exit 3
+}
+EXPECTED_BRANCHES=$((152 * ORIGINS_PER_MOTION))
+ACTUAL_BRANCHES=$(find "$BRANCHES" -maxdepth 1 -type f -name 'branch_*.npz' | wc -l)
+if test "$ACTUAL_BRANCHES" -ne "$EXPECTED_BRANCHES"; then
+  echo "collection incomplete: expected $EXPECTED_BRANCHES branches, got $ACTUAL_BRANCHES" >&2
+  exit 3
+fi
+
 "$TRAIN_PYTHON" PredActor/scripts/finalize_paper_dagger_round.py \
   --branches "$BRANCHES" --round-dir "$ROUND_ROOT" \
   --d0-zarr "$D0" --normalizer-checkpoint "$PI0" \

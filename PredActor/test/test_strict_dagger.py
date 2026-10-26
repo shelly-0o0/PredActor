@@ -24,11 +24,28 @@ from dagger.policy_benchmark import (
 )
 from dagger.text_commands import command_id_for_text
 from dagger.same_origin import audit_same_origin_group
-from dagger.isaaclab_adapter import state_max_abs
+from dagger.isaaclab_adapter import IsaacLabVectorForkAdapter, state_max_abs
 from diffusion_policy.task_provider.fixed_embedding import FixedEmbeddingProvider
 
 
 class StrictDaggerTests(unittest.TestCase):
+    def test_teacher_transaction_freezes_live_interval_event_timer(self):
+        class EventManager:
+            _interval_term_time_left = [torch.tensor([0.25, 0.75])]
+
+        class Env:
+            event_manager = EventManager()
+
+        adapter = IsaacLabVectorForkAdapter.__new__(IsaacLabVectorForkAdapter)
+        adapter.env = Env()
+        adapter.num_envs = 2
+        adapter.live_env_id = 0
+        saved = adapter._suspend_live_interval_events()
+        self.assertTrue(torch.isinf(adapter.env.event_manager._interval_term_time_left[0][0]))
+        self.assertEqual(adapter.env.event_manager._interval_term_time_left[0][1], 0.75)
+        adapter._restore_interval_event_rows(saved, adapter.live_env_id)
+        self.assertEqual(adapter.env.event_manager._interval_term_time_left[0][0], 0.25)
+
     def test_isaaclab_state_comparison_is_fail_closed(self):
         left = {
             "root_pos": np.zeros(3, dtype=np.float32),
