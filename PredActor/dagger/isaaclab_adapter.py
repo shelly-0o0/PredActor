@@ -243,6 +243,22 @@ class IsaacLabVectorForkAdapter:
         result[:3] += origins[target] - origins[source]
         return result
 
+    def _invalidate_articulation_body_caches(self) -> None:
+        """Force restored link state to be read back from PhysX.
+
+        IsaacLab's articulation data is timestamp-cached.  A global shadow
+        step refreshes ``body_state_w`` for every vector lane, while
+        ``write_root_state_to_sim``/``write_joint_state_to_sim`` followed by
+        ``sim.forward`` does not advance that timestamp.  Without invalidation
+        the next observation can therefore return pre-restore link velocities
+        even though the generalized PhysX state has already been restored.
+        """
+        data = self.robot.data
+        for name in ("_body_state_w", "_body_link_state_w"):
+            cache = getattr(data, name, None)
+            if cache is not None and hasattr(cache, "timestamp"):
+                cache.timestamp = -1.0
+
     def restore(self, snapshot: IsaacLabLaneSnapshot, *, env_id: int | None = None) -> None:
         target = snapshot.env_id if env_id is None else int(env_id)
         target_ids = torch.as_tensor([target], dtype=torch.long, device=self.device)
@@ -264,6 +280,7 @@ class IsaacLabVectorForkAdapter:
         simulation = getattr(self.env, "sim", None)
         if simulation is not None and hasattr(simulation, "forward"):
             simulation.forward()
+        self._invalidate_articulation_body_caches()
 
     def verify_live_restored(self, snapshot: IsaacLabLaneSnapshot) -> float:
         current = _copy_state(self.observe_fn(), self.live_env_id)

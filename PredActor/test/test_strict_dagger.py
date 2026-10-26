@@ -65,6 +65,23 @@ class StrictDaggerTests(unittest.TestCase):
         manager.compute = original
         self.assertEqual(manager.compute().tolist(), [True, True])
 
+    def test_restore_invalidates_lazy_articulation_body_state(self):
+        class Cache:
+            timestamp = 12.5
+
+        class Data:
+            _body_state_w = Cache()
+            _body_link_state_w = Cache()
+
+        class Robot:
+            data = Data()
+
+        adapter = IsaacLabVectorForkAdapter.__new__(IsaacLabVectorForkAdapter)
+        adapter.robot = Robot()
+        adapter._invalidate_articulation_body_caches()
+        self.assertEqual(adapter.robot.data._body_state_w.timestamp, -1.0)
+        self.assertEqual(adapter.robot.data._body_link_state_w.timestamp, -1.0)
+
     def test_isaaclab_state_comparison_is_fail_closed(self):
         left = {
             "root_pos": np.zeros(3, dtype=np.float32),
