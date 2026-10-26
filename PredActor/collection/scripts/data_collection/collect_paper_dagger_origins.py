@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import random
+import re
 import sys
 import traceback
 
@@ -26,7 +27,12 @@ PREDACTOR_DIR = SCRIPT_DIR.parents[2]
 if str(PREDACTOR_DIR) not in sys.path:
     sys.path.insert(0, str(PREDACTOR_DIR))
 
-from dagger.paper_origins import PaperDaggerOrigin, is_origin_step, save_origin
+from dagger.paper_origins import (
+    PaperDaggerOrigin,
+    is_origin_step,
+    load_origin,
+    save_origin,
+)
 from dagger.phase_conditions import PhaseConditionBank
 from dagger.policy_runtime import ExactTextPolicyRuntime
 
@@ -56,6 +62,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--headless", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--resume", action="store_true",
+        help="Continue an interrupted immutable origin collection",
+    )
     return parser.parse_args()
 
 
@@ -65,9 +75,29 @@ def main() -> None:
         raise ValueError("collection counts must be positive")
     teacher_steps = args.horizon - args.n_obs_steps + 1
     output = Path(args.output).expanduser().resolve()
-    if output.exists() and any(output.glob("origin_*.npz")):
+    existing_paths = sorted(output.glob("origin_*.npz")) if output.exists() else []
+    if existing_paths and not args.resume:
         raise FileExistsError(f"refusing to append to non-empty directory: {output}")
     output.mkdir(parents=True, exist_ok=True)
+
+    existing_counts: dict[int, int] = {}
+    next_origin_index = 0
+    previous_commits = 0
+    pattern = re.compile(r"origin_(\d+)_motion(\d+)\.npz$")
+    for path in existing_paths:
+        match = pattern.search(path.name)
+        if match is None:
+            raise ValueError(f"unrecognized origin filename during resume: {path}")
+        index, motion_idx = (int(value) for value in match.groups())
+        next_origin_index = max(next_origin_index, index + 1)
+        existing_counts[motion_idx] = existing_counts.get(motion_idx, 0) + 1
+    if existing_paths:
+        previous = load_origin(existing_paths[-1])
+        previous_commits = int(previous.metadata.get("learner_commits", 0))
+        print(
+            f"[PaperOrigin] resuming {len(existing_paths)} origins at "
+            f"file index {next_origin_index}"
+        )
 
     motion_root = Path(args.motion_root).expanduser().resolve()
     motion_files = sorted(glob.glob(str(motion_root / "*" / "motion.npz")))
@@ -153,11 +183,16 @@ def main() -> None:
             return {key: np.asarray(value[0].detach().cpu()).copy()
                     for key, value in observe_all().items()}
 
-        written = 0
-        learner_commits = 0
+        written = next_origin_index
+        learner_commits = previous_commits
         per_motion = {}
         for motion_idx in selected:
-            accepted = 0
+            accepted = existing_counts.get(motion_idx, 0)
+            if accepted > args.candidates_per_motion:
+                raise ValueError(
+                    f"motion {motion_idx} already has {accepted} origins, exceeding "
+                    f"the requested {args.candidates_per_motion}"
+                )
             attempts = 0
             while accepted < args.candidates_per_motion:
                 attempts += 1
@@ -239,7 +274,9 @@ def main() -> None:
 
         receipt = {
             "schema": "predactor-paper-dagger-origin-collection-v1",
-            "origins": written, "selected_motion_ids": list(selected),
+            "origins": sum(per_motion.values()),
+            "next_origin_index": written,
+            "selected_motion_ids": list(selected),
             "candidates_per_motion": args.candidates_per_motion,
             "per_motion": per_motion, "learner_commits": learner_commits,
             "teacher_steps_in_live_simulator": 0,

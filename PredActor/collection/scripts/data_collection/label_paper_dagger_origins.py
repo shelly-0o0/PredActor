@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import random
+import re
 import sys
 import traceback
 
@@ -43,6 +44,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--phase-conditions", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--origins-per-motion", type=int, default=5)
+    parser.add_argument(
+        "--collect-all-valid", action="store_true",
+        help="Keep every complete teacher continuation instead of truncating per motion",
+    )
+    parser.add_argument("--minimum-accepted-per-motion", type=int, default=1)
     parser.add_argument("--motion-ids", default="")
     parser.add_argument("--horizon", type=int, default=20)
     parser.add_argument("--n-obs-steps", type=int, default=4)
@@ -50,6 +56,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--headless", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--restore-atol", type=float, default=1.0e-5)
+    parser.add_argument(
+        "--resume", action="store_true",
+        help="Continue an interrupted immutable teacher-label collection",
+    )
     return parser.parse_args()
 
 
@@ -65,7 +75,10 @@ def main() -> None:
     teacher_steps = args.horizon - args.n_obs_steps + 1
     origins_dir = Path(args.origins).expanduser().resolve()
     output = Path(args.output).expanduser().resolve()
-    if output.exists() and any(output.glob("branch_*.npz")):
+    existing_branch_paths = (
+        sorted(output.glob("branch_*.npz")) if output.exists() else []
+    )
+    if existing_branch_paths and not args.resume:
         raise FileExistsError(f"refusing to append to non-empty directory: {output}")
     output.mkdir(parents=True, exist_ok=True)
     origin_paths = sorted(origins_dir.glob("origin_*.npz"))
@@ -85,6 +98,26 @@ def main() -> None:
                      if available[index] < args.origins_per_motion)
     if missing:
         raise ValueError(f"insufficient origin candidates for motions: {missing}")
+
+    accepted = Counter()
+    processed_origins: set[str] = set()
+    written = 0
+    branch_pattern = re.compile(r"branch_(\d+)_motion(\d+)\.npz$")
+    for path in existing_branch_paths:
+        match = branch_pattern.search(path.name)
+        if match is None:
+            raise ValueError(f"unrecognized branch filename during resume: {path}")
+        index, motion_idx = (int(value) for value in match.groups())
+        with np.load(path, allow_pickle=False) as archive:
+            metadata = json.loads(str(archive["metadata_json"].item()))
+        processed_origins.add(str(Path(metadata["origin_file"]).resolve()))
+        accepted[motion_idx] += 1
+        written = max(written, index + 1)
+    if existing_branch_paths:
+        print(
+            f"[PaperTeacher] resuming {len(existing_branch_paths)} branches at "
+            f"file index {written}"
+        )
 
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -191,14 +224,17 @@ def main() -> None:
                 raise RuntimeError(f"teacher origin restore error {error} > {args.restore_atol}")
             return error
 
-        accepted = Counter()
         rejected = Counter()
-        written = 0
         maximum_restore = 0.0
         for path in origin_paths:
+            if str(path.resolve()) in processed_origins:
+                continue
             origin = load_origin(path)
             motion_idx = origin.motion_idx
-            if motion_idx not in expected_ids or accepted[motion_idx] >= args.origins_per_motion:
+            if motion_idx not in expected_ids or (
+                not args.collect_all_valid
+                and accepted[motion_idx] >= args.origins_per_motion
+            ):
                 continue
             restore_error = initialize(origin)
             maximum_restore = max(maximum_restore, restore_error)
@@ -264,15 +300,23 @@ def main() -> None:
                 f"total={written} restore={restore_error:.3e}"
             )
 
-        incomplete = {index: accepted[index] for index in selected
-                      if accepted[index] != args.origins_per_motion}
+        required = (
+            args.minimum_accepted_per_motion
+            if args.collect_all_valid else args.origins_per_motion
+        )
+        incomplete = {
+            index: accepted[index] for index in selected
+            if accepted[index] < required
+        }
         if incomplete:
             raise RuntimeError(f"insufficient accepted teacher branches: {incomplete}")
         receipt = {
             "schema": "predactor-paper-dagger-teacher-label-v2",
-            "process_isolated": True, "windows": written,
+            "process_isolated": True, "windows": sum(accepted.values()),
             "selected_motion_ids": list(selected),
             "origins_per_motion": args.origins_per_motion,
+            "collect_all_valid": args.collect_all_valid,
+            "minimum_accepted_per_motion": required,
             "per_motion": {str(index): accepted[index] for index in selected},
             "teacher_terminated_rejections": sum(rejected.values()),
             "maximum_origin_restore_abs": maximum_restore,

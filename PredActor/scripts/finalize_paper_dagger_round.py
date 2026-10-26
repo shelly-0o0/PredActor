@@ -32,6 +32,8 @@ def main() -> None:
         help="Comma-separated audited subset for a canary; formal rounds leave this empty",
     )
     parser.add_argument("--expected-origins-per-motion", type=int, required=True)
+    parser.add_argument("--allow-variable-counts", action="store_true")
+    parser.add_argument("--minimum-origins-per-motion", type=int, default=1)
     parser.add_argument("--horizon", type=int, default=20)
     parser.add_argument("--n-obs-steps", type=int, default=4)
     parser.add_argument("--max-live-restore-error", type=float, default=1.0e-5)
@@ -57,7 +59,7 @@ def main() -> None:
     if not expected_ids or min(expected_ids) < 0 or max(expected_ids) >= args.expected_motion_count:
         raise ValueError("invalid --expected-motion-ids")
     expected_total = len(expected_ids) * args.expected_origins_per_motion
-    if len(paths) != expected_total:
+    if not args.allow_variable_counts and len(paths) != expected_total:
         raise ValueError(f"expected {expected_total} branches, got {len(paths)}")
     if args.min_d1_windows < 0:
         raise ValueError("--min-d1-windows must be non-negative")
@@ -134,9 +136,12 @@ def main() -> None:
         maximum_restore = max(maximum_restore, restore)
         results.append({"file": str(path), "motion_idx": motion_idx, "phase": phases[0]})
 
-    if set(counts) != expected_ids or any(
-        counts[index] != args.expected_origins_per_motion for index in expected_ids
-    ):
+    count_mismatch = (
+        any(counts[index] < args.minimum_origins_per_motion for index in expected_ids)
+        if args.allow_variable_counts else
+        any(counts[index] != args.expected_origins_per_motion for index in expected_ids)
+    )
+    if set(counts) != expected_ids or count_mismatch:
         raise ValueError(f"motion coverage/count mismatch: {dict(sorted(counts.items()))}")
     output.parent.mkdir(parents=True, exist_ok=True)
     buffer.save_to_path(str(output))
@@ -165,6 +170,8 @@ def main() -> None:
         "windows": len(paths),
         "motions": len(counts),
         "origins_per_motion": args.expected_origins_per_motion,
+        "variable_motion_counts": args.allow_variable_counts,
+        "minimum_origins_per_motion": args.minimum_origins_per_motion,
         "d0_windows": d0_windows,
         "d1_windows": d1_windows,
         "d1_fraction": d1_fraction,

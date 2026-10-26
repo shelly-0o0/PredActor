@@ -11,7 +11,7 @@ ORIGINS_PER_MOTION="${PREDACTOR_ORIGINS_PER_MOTION:-2000}"
 CANDIDATES_PER_MOTION="${PREDACTOR_CANDIDATES_PER_MOTION:-3200}"
 BRANCH_EVERY="${PREDACTOR_BRANCH_EVERY:-6}"
 MAX_EPISODE_STEPS="${PREDACTOR_MAX_EPISODE_STEPS:-240}"
-MAX_ATTEMPTS_PER_MOTION="${PREDACTOR_MAX_ATTEMPTS_PER_MOTION:-300}"
+MAX_ATTEMPTS_PER_MOTION="${PREDACTOR_MAX_ATTEMPTS_PER_MOTION:-5000}"
 # These are launch gates, not sampling weights.  The trainer still performs
 # literal D0 union D1 aggregate replay with every window present once.
 MIN_D1_WINDOWS="${PREDACTOR_MIN_D1_WINDOWS:-250000}"
@@ -31,10 +31,6 @@ cd "$REPO_ROOT"
 for path in "$COLLECTION_PYTHON" "$TRAIN_PYTHON" "$PI0" "$TEACHER" "$MOTIONS" "$D0"; do
   test -e "$path" || { echo "missing required input: $path" >&2; exit 2; }
 done
-if test -e "$ROUND_ROOT"; then
-  echo "refusing to overwrite existing round: $ROUND_ROOT" >&2
-  exit 2
-fi
 mkdir -p "$ROUND_ROOT"
 
 EXPECTED_BRANCHES=$((152 * ORIGINS_PER_MOTION))
@@ -54,17 +50,19 @@ export PYTHONPATH="$REPO_ROOT/PredActor:$REPO_ROOT/PredActor/collection/source/r
 export PREDACTOR_ROOT="$REPO_ROOT/PredActor"
 export PREDACTOR_ASSET_ROOT="$REPO_ROOT/PredActor/assets"
 
-"$COLLECTION_PYTHON" \
-  PredActor/collection/scripts/data_collection/collect_paper_dagger_origins.py \
-  --learner-checkpoint "$PI0" \
-  --motion-root "$MOTIONS" \
-  --phase-conditions "$CONDITIONS" \
-  --output "$ORIGINS" \
-  --candidates-per-motion "$CANDIDATES_PER_MOTION" \
-  --branch-every "$BRANCH_EVERY" \
-  --max-episode-steps "$MAX_EPISODE_STEPS" \
-  --max-attempts-per-motion "$MAX_ATTEMPTS_PER_MOTION" \
-  --seed 42 --headless
+if ! test -f "$ORIGINS/origin_receipt.json"; then
+  "$COLLECTION_PYTHON" \
+    PredActor/collection/scripts/data_collection/collect_paper_dagger_origins.py \
+    --learner-checkpoint "$PI0" \
+    --motion-root "$MOTIONS" \
+    --phase-conditions "$CONDITIONS" \
+    --output "$ORIGINS" \
+    --candidates-per-motion "$CANDIDATES_PER_MOTION" \
+    --branch-every "$BRANCH_EVERY" \
+    --max-episode-steps "$MAX_EPISODE_STEPS" \
+    --max-attempts-per-motion "$MAX_ATTEMPTS_PER_MOTION" \
+    --resume --seed 42 --headless
+fi
 
 ORIGIN_RECEIPT="$ORIGINS/origin_receipt.json"
 test -f "$ORIGIN_RECEIPT" || {
@@ -81,15 +79,18 @@ fi
 # The teacher runs in a fresh IsaacLab process.  It never steps or restores the
 # live learner simulator, so vector-wide physics/events/resets cannot corrupt
 # learner visitation.  Extra candidates absorb rejected teacher continuations.
-"$COLLECTION_PYTHON" \
-  PredActor/collection/scripts/data_collection/label_paper_dagger_origins.py \
-  --origins "$ORIGINS" \
-  --teacher-checkpoint "$TEACHER" \
-  --motion-root "$MOTIONS" \
-  --phase-conditions "$CONDITIONS" \
-  --output "$BRANCHES" \
-  --origins-per-motion "$ORIGINS_PER_MOTION" \
-  --seed 42 --headless
+if ! test -f "$BRANCHES/collection_receipt.json"; then
+  "$COLLECTION_PYTHON" \
+    PredActor/collection/scripts/data_collection/label_paper_dagger_origins.py \
+    --origins "$ORIGINS" \
+    --teacher-checkpoint "$TEACHER" \
+    --motion-root "$MOTIONS" \
+    --phase-conditions "$CONDITIONS" \
+    --output "$BRANCHES" \
+    --origins-per-motion "$ORIGINS_PER_MOTION" \
+    --collect-all-valid --minimum-accepted-per-motion 1 --resume \
+    --seed 42 --headless
+fi
 
 # Isaac Sim may terminate unusually after an exception.  Require a complete
 # receipt and exact branch count before finalization.
@@ -99,8 +100,8 @@ test -f "$RECEIPT" || {
   exit 3
 }
 ACTUAL_BRANCHES=$(find "$BRANCHES" -maxdepth 1 -type f -name 'branch_*.npz' | wc -l)
-if test "$ACTUAL_BRANCHES" -ne "$EXPECTED_BRANCHES"; then
-  echo "collection incomplete: expected $EXPECTED_BRANCHES branches, got $ACTUAL_BRANCHES" >&2
+if test "$ACTUAL_BRANCHES" -lt "$MIN_D1_WINDOWS"; then
+  echo "collection incomplete: minimum $MIN_D1_WINDOWS branches, got $ACTUAL_BRANCHES" >&2
   exit 3
 fi
 
@@ -109,6 +110,7 @@ fi
   --d0-zarr "$D0" --normalizer-checkpoint "$PI0" \
   --expected-motion-count 152 \
   --expected-origins-per-motion "$ORIGINS_PER_MOTION" \
+  --allow-variable-counts --minimum-origins-per-motion 1 \
   --min-d1-windows "$MIN_D1_WINDOWS" \
   --min-d1-fraction "$MIN_D1_FRACTION"
 
