@@ -58,6 +58,26 @@ def state_max_abs(left: State, right: State) -> float:
     return maximum
 
 
+def state_abs_errors(left: State, right: State) -> dict[str, float]:
+    """Per-field diagnostic companion to the fail-closed aggregate check."""
+    if set(left) != set(right):
+        raise ValueError(f"state fields differ: {sorted(set(left) ^ set(right))}")
+    result = {}
+    for key in left:
+        a = np.asarray(left[key])
+        b = np.asarray(right[key])
+        if a.shape != b.shape:
+            result[key] = float("inf")
+        elif np.issubdtype(a.dtype, np.floating):
+            result[key] = (
+                float(np.max(np.abs(a.astype(np.float64) - b)))
+                if a.size else 0.0
+            )
+        else:
+            result[key] = 0.0 if np.array_equal(a, b) else float("inf")
+    return result
+
+
 @dataclass
 class IsaacLabLaneSnapshot:
     env_id: int
@@ -178,9 +198,12 @@ class IsaacLabVectorForkAdapter:
         error = state_max_abs(snapshot.observable, current)
         self.max_restore_error = max(self.max_restore_error, error)
         if not np.isfinite(error) or error > self.restore_atol:
+            fields = state_abs_errors(snapshot.observable, current)
+            worst = sorted(fields.items(), key=lambda item: item[1], reverse=True)[:5]
             raise RuntimeError(
                 "teacher transaction changed protected live state: "
-                f"max_abs={error:.6g}, tolerance={self.restore_atol:.6g}"
+                f"max_abs={error:.6g}, tolerance={self.restore_atol:.6g}, "
+                f"worst_fields={worst}"
             )
         return error
 
