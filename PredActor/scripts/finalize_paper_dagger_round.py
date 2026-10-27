@@ -22,7 +22,10 @@ from diffusion_policy.utils.replay_buffer import ReplayBuffer
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--branches", required=True)
+    parser.add_argument(
+        "--branches", action="append", required=True,
+        help="Teacher branch directory; repeat for sharded collections",
+    )
     parser.add_argument("--round-dir", required=True)
     parser.add_argument("--d0-zarr", required=True)
     parser.add_argument("--normalizer-checkpoint", required=True)
@@ -41,7 +44,7 @@ def main() -> None:
     parser.add_argument("--min-d1-fraction", type=float, default=0.0)
     args = parser.parse_args()
 
-    branches = Path(args.branches).expanduser().resolve()
+    branch_dirs = [Path(value).expanduser().resolve() for value in args.branches]
     round_dir = Path(args.round_dir).expanduser().resolve()
     round_dir.mkdir(parents=True, exist_ok=True)
     output = round_dir / "d1_origins.zarr"
@@ -51,7 +54,10 @@ def main() -> None:
         if path.exists():
             raise FileExistsError(f"refusing to overwrite finalized artifact: {path}")
 
-    paths = sorted(branches.glob("branch_*.npz"))
+    paths = sorted(
+        (path for directory in branch_dirs for path in directory.glob("branch_*.npz")),
+        key=str,
+    )
     expected_ids = (
         {int(value) for value in args.expected_motion_ids.split(",")}
         if args.expected_motion_ids else set(range(args.expected_motion_count))
@@ -147,7 +153,7 @@ def main() -> None:
     buffer.save_to_path(str(output))
     receipt = {
         "schema": "predactor-strict-dagger-shard-v1",
-        "source_directory": str(branches),
+        "source_directories": [str(directory) for directory in branch_dirs],
         "output": str(output),
         "windows": len(paths),
         "horizon": args.horizon,

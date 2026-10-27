@@ -38,7 +38,10 @@ POLICY_STATE_FIELDS = (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--origins", required=True)
+    parser.add_argument(
+        "--origins", action="append", required=True,
+        help="Origin directory; repeat for sharded collections",
+    )
     parser.add_argument("--teacher-checkpoint", required=True)
     parser.add_argument("--motion-root", required=True)
     parser.add_argument("--phase-conditions", required=True)
@@ -73,7 +76,7 @@ def _conditioned_state(state, bank, motion_idx, phase):
 def main() -> None:
     args = parse_args()
     teacher_steps = args.horizon - args.n_obs_steps + 1
-    origins_dir = Path(args.origins).expanduser().resolve()
+    origins_dirs = [Path(value).expanduser().resolve() for value in args.origins]
     output = Path(args.output).expanduser().resolve()
     existing_branch_paths = (
         sorted(output.glob("branch_*.npz")) if output.exists() else []
@@ -81,9 +84,6 @@ def main() -> None:
     if existing_branch_paths and not args.resume:
         raise FileExistsError(f"refusing to append to non-empty directory: {output}")
     output.mkdir(parents=True, exist_ok=True)
-    origin_paths = sorted(origins_dir.glob("origin_*.npz"))
-    if not origin_paths:
-        raise FileNotFoundError(f"no origin files in {origins_dir}")
 
     motion_root = Path(args.motion_root).expanduser().resolve()
     motion_files = sorted(glob.glob(str(motion_root / "*" / "motion.npz")))
@@ -93,7 +93,23 @@ def main() -> None:
         if args.motion_ids else tuple(range(len(motion_files)))
     )
     expected_ids = set(selected)
-    available = Counter(load_origin(path).motion_idx for path in origin_paths)
+
+    origin_pattern = re.compile(r"origin_\d+_motion(\d+)\.npz$")
+    origin_records = []
+    for origins_dir in origins_dirs:
+        for path in origins_dir.glob("origin_*.npz"):
+            match = origin_pattern.search(path.name)
+            if match is None:
+                raise ValueError(f"unrecognized origin filename: {path}")
+            origin_records.append((path, int(match.group(1))))
+    origin_records.sort(key=lambda item: str(item[0]))
+    origin_paths = [path for path, motion_idx in origin_records if motion_idx in expected_ids]
+    if not origin_paths:
+        raise FileNotFoundError(f"no selected origin files in {origins_dirs}")
+
+    available = Counter(
+        motion_idx for _, motion_idx in origin_records if motion_idx in expected_ids
+    )
     missing = sorted(index for index in expected_ids
                      if available[index] < args.origins_per_motion)
     if missing:
